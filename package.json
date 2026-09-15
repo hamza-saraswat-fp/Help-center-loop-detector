@@ -1,0 +1,24 @@
+{
+  "name": "help-center-gap-detector",
+  "version": "0.1.0",
+  "description": "Cron service that reconciles support/product signals against the FieldPulse help center and posts documentation gap candidates to Slack for review",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js",
+    "calibrate": "node scripts/calibrate.js",
+    "migrate": "bash scripts/apply-migrations.sh"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@slack/web-api": "^7.9.3",
+    "@supabase/supabase-js": "^2.103.0",
+    "dotenv": "^16.4.7",
+    "openai": "^6.33.0",
+    "pg": "^8.13.1"
+  }
+}

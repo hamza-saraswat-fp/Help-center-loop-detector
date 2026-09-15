@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "watchPatterns": ["src/**", "prompts/**", "config/**", "package.json"]
+  },
+  "deploy": {
+    "cronSchedule": "0 * * * *",
+    "startCommand": "npm start",
+    "restartPolicyType": "NEVER"
+  }
+}
