@@ -76,21 +76,24 @@ export function parseMintlifyResult(text) {
 
   const results = [];
   for (const blockLines of blocks) {
+    // Find where Content: starts first — fields (Title:/Link:/Page:) are
+    // only ever read from lines *before* it. Without this, a doc body line
+    // that happens to start with "Link:" or "Title:" (e.g. quoted UI text
+    // in the snippet) would be picked up as a field and overwrite the real
+    // one parsed from the block's header.
+    const contentIdx = blockLines.findIndex((line) => line.startsWith('Content:'));
+    const fieldLines = contentIdx === -1 ? blockLines : blockLines.slice(0, contentIdx);
+
     let title = '';
     let url = '';
     let page = null;
-    let contentIdx = -1;
-
-    for (let i = 0; i < blockLines.length; i += 1) {
-      const line = blockLines[i];
+    for (const line of fieldLines) {
       if (line.startsWith('Title:')) {
         title = line.slice('Title:'.length).trim();
       } else if (line.startsWith('Link:')) {
         url = line.slice('Link:'.length).trim();
       } else if (line.startsWith('Page:')) {
         page = line.slice('Page:'.length).trim();
-      } else if (contentIdx === -1 && line.startsWith('Content:')) {
-        contentIdx = i;
       }
     }
 
@@ -118,6 +121,18 @@ export function parseMintlifyResult(text) {
  * degrade to null/[] on any failure or timeout.
  * @param {{url?: string, clientFactory?: (url: string) => {client: object, transport: object}, now?: () => number}} [opts]
  */
+/** Close `c` if it exposes close(), swallowing any error — used to avoid
+ * leaking a transport when connect() bails out after it already connected. */
+async function safeClose(c) {
+  if (c && typeof c.close === 'function') {
+    try {
+      await c.close();
+    } catch {
+      // ignore — we're already abandoning this client
+    }
+  }
+}
+
 export function createMintlifyClient({
   url = mintlifyMcpUrl,
   clientFactory = defaultClientFactory,
@@ -150,6 +165,7 @@ export function createMintlifyClient({
         warn(LANE, `no search-like tool found tools=${tools.map((t) => t.name).join(',')}`);
         client = null;
         searchToolName = null;
+        await safeClose(candidateClient);
         return null;
       }
 
@@ -161,6 +177,10 @@ export function createMintlifyClient({
       warn(LANE, `connect failed: ${err.message}`);
       client = null;
       searchToolName = null;
+      // The transport may already be connected even though a later step
+      // (listTools, or the timeout race) failed — close it so a retried
+      // connect() doesn't leak it.
+      await safeClose(candidateClient);
       return null;
     }
   }

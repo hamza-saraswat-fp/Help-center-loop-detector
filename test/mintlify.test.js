@@ -8,7 +8,7 @@ process.env.HC_LOOP_SKIP_ENV_VALIDATION = 'true';
 const { createMintlifyClient, parseMintlifyResult } = await import('../src/docs/mintlify.js');
 
 function makeFakeClient({ connectImpl, listToolsImpl, callToolImpl } = {}) {
-  const calls = { connect: [], listTools: 0, callTool: [] };
+  const calls = { connect: [], listTools: 0, callTool: [], close: 0 };
   return {
     calls,
     client: {
@@ -25,6 +25,9 @@ function makeFakeClient({ connectImpl, listToolsImpl, callToolImpl } = {}) {
         calls.callTool.push(args);
         if (callToolImpl) return callToolImpl(args);
         return { content: [] };
+      },
+      close: async () => {
+        calls.close += 1;
       },
     },
     transport: {},
@@ -79,6 +82,32 @@ test('parseMintlifyResult: caps snippet at 600 chars', () => {
   assert.equal(result[0].snippet.length, 600);
 });
 
+test('parseMintlifyResult: a Content-section line starting with Link: or Title: does not overwrite the real fields', () => {
+  // Regression: the field scan must stop at the first Content: line. A doc
+  // body line that happens to start with "Link:" (quoted UI text, e.g.
+  // "Link: Settings > Billing") must stay in the snippet, not clobber the
+  // block's real url/title/page parsed from the header lines above it.
+  const text = [
+    'Title: Billing Settings',
+    'Link: https://help.fieldpulse.com/billing/settings',
+    'Page: Billing',
+    'Content: Navigate to Settings > Billing to update your plan.',
+    'Link: Settings > Billing',
+    'Title: something',
+  ].join('\n');
+
+  const result = parseMintlifyResult(text);
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].title, 'Billing Settings');
+  assert.equal(result[0].url, 'https://help.fieldpulse.com/billing/settings');
+  assert.equal(result[0].page, 'Billing');
+  assert.ok(
+    result[0].snippet.includes('Link: Settings > Billing'),
+    `expected snippet to retain body text, got: ${result[0].snippet}`,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // createMintlifyClient: connect
 // ---------------------------------------------------------------------------
@@ -127,6 +156,19 @@ test('connect returns null when listTools has no search-like tool', async () => 
   const toolName = await client.connect();
 
   assert.equal(toolName, null);
+});
+
+test('connect closes the transport when no search-like tool is found (no leak on retry)', async () => {
+  const fake = makeFakeClient({
+    listToolsImpl: () => ({ tools: [{ name: 'read_page' }, { name: 'list_pages' }] }),
+  });
+  const client = createMintlifyClient({
+    clientFactory: () => ({ client: fake.client, transport: fake.transport }),
+  });
+
+  await client.connect();
+
+  assert.equal(fake.calls.close, 1);
 });
 
 // ---------------------------------------------------------------------------
