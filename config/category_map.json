@@ -1,0 +1,38 @@
+{
+  "canonical": {
+    "using-fieldpulse": { "dir": "using-fieldpulse" },
+    "features-add-ons": { "dir": "features-add-ons" },
+    "integrations-partners": { "dir": "integrations-partners" },
+    "getting-started": { "dir": "getting-started" },
+    "training-resources": { "dir": "training-resources" },
+    "offline-mode": { "dir": "offline-mode" },
+    "troubleshooting-technical-specs": { "dir": "troubleshooting-technical-specs" },
+    "general": { "dir": null }
+  },
+  "juju": {
+    "accounting-software": "integrations-partners",
+    "core-platform": "using-fieldpulse",
+    "growth": "features-add-ons",
+    "integrations": "integrations-partners",
+    "ai": "features-add-ons",
+    "operator": "features-add-ons",
+    "general": "general"
+  },
+  "sidecar": {
+    "using-fieldpulse": "using-fieldpulse",
+    "features-add-ons": "features-add-ons",
+    "integrations-partners": "integrations-partners",
+    "getting-started": "getting-started",
+    "training-resources": "training-resources",
+    "offline-mode": "offline-mode",
+    "troubleshooting-technical-specs": "troubleshooting-technical-specs",
+    "billing": "using-fieldpulse",
+    "fieldpulse-payments": "using-fieldpulse",
+    "quickbooks": "integrations-partners",
+    "scheduling-and-jobs": "using-fieldpulse",
+    "estimates-and-invoices": "using-fieldpulse",
+    "settings-and-setup": "using-fieldpulse",
+    "other": "general"
+  },
+  "any": {}
+}
