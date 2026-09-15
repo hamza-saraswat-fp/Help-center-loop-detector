@@ -11,6 +11,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { normalizeCategoryInput } from './normalize.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CATEGORY_MAP_PATH = path.join(__dirname, '..', '..', 'config', 'category_map.json');
 
@@ -18,6 +20,14 @@ const DEFAULT_CATEGORY_MAP_PATH = path.join(__dirname, '..', '..', 'config', 'ca
 // (support/product chat about FieldPulse). Deliberately small: the goal is
 // to strip words that add noise to a fingerprint, not to be a general NLP
 // stopword list.
+//
+// `new` is an addition beyond the brief's enumerated stopword list: it's
+// filler in this corpus ("add a new user", "a new invoice") and, without
+// dropping it, the brief's own reworded-pair example ("How do I add a new
+// team member to my account?" vs "Adding team members, how does it work")
+// scores Jaccard 0.5, short of the required >= 0.6 -- the two sentences
+// only truly share add/team/member; "new" is a one-sided word that adds no
+// topic signal.
 const STOPWORDS = new Set([
   'how', 'do', 'does', 'can', 'i', 'we', 'you', 'the', 'a', 'an', 'to', 'in', 'on', 'for', 'of', 'is',
   'are', 'be', 'it', 'this', 'that', 'my', 'our', 'your', 'with', 'and', 'or', 'not', 'no', 'if', 'when',
@@ -101,10 +111,6 @@ export function contentTerms(event, { max = 8 } = {}) {
   });
 
   return ranked.slice(0, max).sort((a, b) => a.localeCompare(b));
-}
-
-function normalizeCategoryInput(value) {
-  return String(value).trim().toLowerCase().replace(/[\s_]+/g, '-');
 }
 
 /**

@@ -8,12 +8,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { normalizeCategoryInput } from './normalize.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_SHORTCUT_RULES_PATH = path.join(__dirname, '..', '..', 'config', 'shortcut_rules.json');
-
-function normalizeCategoryInput(value) {
-  return String(value).trim().toLowerCase().replace(/[\s_]+/g, '-');
-}
 
 /**
  * Read and parse config/shortcut_rules.json (or an injected path, for tests).
