@@ -1,0 +1,27 @@
+Here is my assessment of the packet you gave me.
+
+```json
+{
+  "destination": "help_center",
+  "verdict": "NEEDS_EDIT",
+  "question_paraphrase": "Can I remove a tag from a customer record?",
+  "truth_summary": "Yes, click the x on the tag chip to remove it.",
+  "target_article_path": "using-fieldpulse/customers/tags.mdx",
+  "target_article_url": null,
+  "says_now": "Click the x on the tag chip to remove it from the record.",
+  "should_say": "Click the x on the tag chip to remove it from the record.",
+  "proposed_change": "No change needed to this sentence; the gap is elsewhere in the article.",
+  "paste_request": "In \"Tagging Customers\", clarify where the tag chip appears on the record.",
+  "confidence": 70,
+  "claims": [
+    {
+      "claim": "You remove a tag by clicking the x on its chip.",
+      "status": "supported",
+      "article_path": "using-fieldpulse/customers/tags.mdx",
+      "sentence": "Click the x on the tag chip to remove it from the record."
+    }
+  ]
+}
+```
+
+Let me know if you need anything else.

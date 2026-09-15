@@ -1,0 +1,4 @@
+I looked through the articles you gave me but I'm not confident I can produce
+a structured verdict right now. The evidence is thin and I'd rather flag
+that than guess. Someone should take a closer look at this one by hand
+before it goes anywhere near a customer-facing answer.
