@@ -75,17 +75,45 @@ test('ONYX_MODE=live without an API key leaves isOnyxConfigured() false', () => 
   assert.equal(config.isOnyxConfigured(), false);
 });
 
-test('isOnyxConfigured() is true only when base URL and API key are both set', () => {
-  const missingKey = loadEnv(baseEnv({ ONYX_BASE_URL: 'https://onyx.example.com' }));
+test('isOnyxConfigured() is true only when the mode is off the off rung and both base URL and API key are set', () => {
+  const missingKey = loadEnv(
+    baseEnv({ ONYX_MODE: 'shadow', ONYX_BASE_URL: 'https://onyx.example.com' })
+  );
   assert.equal(missingKey.isOnyxConfigured(), false);
 
-  const missingUrl = loadEnv(baseEnv({ ONYX_API_KEY: 'onyx-key' }));
+  const missingUrl = loadEnv(baseEnv({ ONYX_MODE: 'shadow', ONYX_API_KEY: 'onyx-key' }));
   assert.equal(missingUrl.isOnyxConfigured(), false);
 
   const configured = loadEnv(
-    baseEnv({ ONYX_BASE_URL: 'https://onyx.example.com', ONYX_API_KEY: 'onyx-key' })
+    baseEnv({
+      ONYX_MODE: 'shadow',
+      ONYX_BASE_URL: 'https://onyx.example.com',
+      ONYX_API_KEY: 'onyx-key',
+    })
   );
   assert.equal(configured.isOnyxConfigured(), true);
+});
+
+test('isOnyxConfigured() is false when ONYX_MODE is off, even with credentials set', () => {
+  // ONYX_MODE is 'off' by default in baseEnv() — leftover ONYX_BASE_URL /
+  // ONYX_API_KEY values must not silently activate the lane while the
+  // ladder itself is still on the inert rung.
+  const config = loadEnv(
+    baseEnv({ ONYX_BASE_URL: 'https://onyx.example.com', ONYX_API_KEY: 'onyx-key' })
+  );
+  assert.equal(config.onyxMode, 'off');
+  assert.equal(config.isOnyxConfigured(), false);
+});
+
+test('isOnyxConfigured() is true when ONYX_MODE=shadow and credentials are set', () => {
+  const config = loadEnv(
+    baseEnv({
+      ONYX_MODE: 'shadow',
+      ONYX_BASE_URL: 'https://onyx.example.com',
+      ONYX_API_KEY: 'onyx-key',
+    })
+  );
+  assert.equal(config.isOnyxConfigured(), true);
 });
 
 test('sources map is built from per-source PG URLs, null when unset', () => {
@@ -163,15 +191,43 @@ test('numeric tunables default and guard against non-finite values', () => {
   assert.equal(garbage.repullWindowDays, 14);
 });
 
+test('numeric tunables fall back on an explicitly blank value, not 0', () => {
+  // Number('') is 0, and 0 is finite — a blank var (as .env.example ships
+  // every var blank) must not silently become an explicit zero.
+  const blank = loadEnv(
+    baseEnv({
+      HC_LOOP_MAX_CHECKS_PER_RUN: '',
+      HC_LOOP_REPULL_DAYS: '   ',
+      ONYX_TIMEOUT_MS: '',
+      ONYX_PERSONA_ID: '',
+    })
+  );
+  assert.equal(blank.maxChecksPerRun, 40);
+  assert.equal(blank.repullWindowDays, 14);
+  assert.equal(blank.onyxTimeoutMs, 15_000);
+  assert.equal(blank.onyxPersonaId, 1);
+});
+
 test('isGithubConfigured() reflects GITHUB_TOKEN presence', () => {
   assert.equal(loadEnv(baseEnv()).isGithubConfigured(), false);
   assert.equal(loadEnv(baseEnv({ GITHUB_TOKEN: 'ghp_test' })).isGithubConfigured(), true);
 });
 
-test('isPreviewPrEnabled() reflects HC_LOOP_OPEN_PRS', () => {
+test('isPreviewPrEnabled() requires both HC_LOOP_OPEN_PRS=true and a GitHub token', () => {
   assert.equal(loadEnv(baseEnv()).isPreviewPrEnabled(), false);
-  assert.equal(loadEnv(baseEnv({ HC_LOOP_OPEN_PRS: 'true' })).isPreviewPrEnabled(), true);
   assert.equal(loadEnv(baseEnv({ HC_LOOP_OPEN_PRS: 'nah' })).isPreviewPrEnabled(), false);
+
+  // flag true, no token → false
+  assert.equal(loadEnv(baseEnv({ HC_LOOP_OPEN_PRS: 'true' })).isPreviewPrEnabled(), false);
+
+  // flag true, token set → true
+  assert.equal(
+    loadEnv(baseEnv({ HC_LOOP_OPEN_PRS: 'true', GITHUB_TOKEN: 'ghp_test' })).isPreviewPrEnabled(),
+    true
+  );
+
+  // token alone, flag unset → still false
+  assert.equal(loadEnv(baseEnv({ GITHUB_TOKEN: 'ghp_test' })).isPreviewPrEnabled(), false);
 });
 
 test('hcLoopOwnerMentions defaults to false and only true on the string "true"', () => {

@@ -32,6 +32,12 @@ function parseCsv(raw) {
 }
 
 function parseNumber(raw, fallback) {
+  // Number('') is 0, and 0 is finite — so an unset-but-present var (as
+  // .env.example ships every var blank) must be treated as "use the
+  // fallback", not as an explicit zero.
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return fallback;
+  }
   const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
 }
@@ -155,9 +161,15 @@ export function loadEnv(envObject) {
   return {
     ...config,
     isSourceConfigured: (source) => Boolean(config.sources[source]),
-    isOnyxConfigured: () => Boolean(config.onyxBaseUrl && config.onyxApiKey),
+    // Credentials alone don't turn Onyx on — the ladder must also be off
+    // the inert `off` rung, or leftover ONYX_BASE_URL/ONYX_API_KEY values
+    // would silently activate the lane.
+    isOnyxConfigured: () =>
+      config.onyxMode !== 'off' && Boolean(config.onyxBaseUrl && config.onyxApiKey),
     isGithubConfigured: () => Boolean(config.githubToken),
-    isPreviewPrEnabled: () => config.hcLoopOpenPrs === true,
+    // Both the explicit flag and a working GitHub token are required —
+    // opening a PR with no token would just fail downstream anyway.
+    isPreviewPrEnabled: () => config.hcLoopOpenPrs === true && Boolean(config.githubToken),
   };
 }
 
