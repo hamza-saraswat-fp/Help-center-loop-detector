@@ -1,0 +1,10 @@
+{
+  "redirects": [
+    { "source": "/a", "destination": "/b" },
+    { "source": "/b", "destination": "/using-fieldpulse/customers/tags" },
+    { "source": "/en/articles/1184690-*", "destination": "/using-fieldpulse/customers/tags" },
+    { "source": "/old-call-routing", "destination": "/features-add-ons/engage/call-routing" },
+    { "source": "/en/articles/9988776-do-not-service", "destination": "/unparented/do-not-service-tag" },
+    { "source": "/getting-started/old-first-job", "destination": "/getting-started/first-job" }
+  ]
+}
