@@ -13,6 +13,19 @@ import { tokenize } from '../prefilter/fingerprint.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TERM_EXPANSION_PATH = path.join(__dirname, '..', '..', 'config', 'term_expansion.json');
 
+/** @typedef {{path:string, score:number, coverage:number, matched:string[], hidden:boolean}} LexicalHit */
+
+// fingerprint.js's tokenize() defaults to a 3-char floor, which is right for
+// fingerprinting free text but drops real vocabulary here -- the seeded
+// synonym group has "qb" as a 2-char abbreviation for QuickBooks. Lexical
+// search (query terms, expansion table entries, and document fields alike)
+// tokenizes with a 2-char floor instead so a query for "qb" or a doc body
+// that says "QB" both produce the token "qb". Stopword and stemming
+// behavior is otherwise unchanged.
+function lexTokenize(text) {
+  return tokenize(text, { minLength: 2 });
+}
+
 /** Read and parse config/term_expansion.json (or an injected path, for
  * tests): an array of synonym groups, e.g. `[["invoice","invoicing",...]]`.
  * @param {string} [filePath]
@@ -28,7 +41,7 @@ export function loadTermExpansion(filePath = DEFAULT_TERM_EXPANSION_PATH) {
  * group, and lets a multi-word group member like "work order" compare
  * against a multi-word input term. */
 function normalizeTerm(term) {
-  return tokenize(term).join(' ');
+  return lexTokenize(term).join(' ');
 }
 
 /**
@@ -85,11 +98,11 @@ export function prepareDoc(doc) {
   if (cached) return cached;
 
   const prepared = {
-    title: tokenize(doc.title),
-    description: tokenize(doc.description),
-    headings: (doc.headings ?? []).map((h) => tokenize(h)),
-    faq: (doc.faq ?? []).map((f) => tokenize(f)),
-    body: tokenize(doc.body),
+    title: lexTokenize(doc.title),
+    description: lexTokenize(doc.description),
+    headings: (doc.headings ?? []).map((h) => lexTokenize(h)),
+    faq: (doc.faq ?? []).map((f) => lexTokenize(f)),
+    body: lexTokenize(doc.body),
   };
   preparedCache.set(doc, prepared);
   return prepared;
@@ -147,10 +160,15 @@ export function scoreDoc(doc, terms, { categoryDir = null, boostPaths = [] } = {
   const prepared = prepareDoc(doc);
   let sum = 0;
   const matched = [];
+  // A term that tokenizes to nothing (e.g. "a", or a term made entirely of
+  // stopwords) can never match anything and isn't a real query term -- it's
+  // excluded from the coverage denominator, not just from scoring.
+  let usableTermCount = 0;
 
   for (const term of terms) {
-    const phrase = tokenize(term);
+    const phrase = lexTokenize(term);
     if (phrase.length === 0) continue;
+    usableTermCount += 1;
 
     let termScore = 0;
     let didMatch = false;
@@ -182,7 +200,7 @@ export function scoreDoc(doc, terms, { categoryDir = null, boostPaths = [] } = {
   }
 
   const distinctMatched = [...new Set(matched)];
-  const coverage = terms.length === 0 ? 0 : distinctMatched.length / terms.length;
+  const coverage = usableTermCount === 0 ? 0 : distinctMatched.length / usableTermCount;
   let score = sum + coverage * 4 + (categoryDir && doc.dir === categoryDir ? 2 : 0);
   score *= 1 + 0.1 * (doc.boost || 0);
 
@@ -196,7 +214,7 @@ export function scoreDoc(doc, terms, { categoryDir = null, boostPaths = [] } = {
  * @param {import('./index.js').DocsIndex} index
  * @param {{questionTerms?: string[], answerTerms?: string[], categoryDir?: string|null,
  *   boostPaths?: string[], topK?: number, expansionTable?: string[][]}} [options]
- * @returns {import('./index.js').LexicalHit[]}
+ * @returns {LexicalHit[]}
  */
 export function scoreDocs(
   index,

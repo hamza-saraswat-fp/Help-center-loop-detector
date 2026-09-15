@@ -67,16 +67,20 @@ function stem(token) {
 
 /**
  * Lowercase, replace anything that isn't [a-z0-9] with a space, drop tokens
- * shorter than 3 chars, drop stopwords, then lightly stem what's left.
+ * shorter than `minLength` chars (default 3), drop stopwords, then lightly
+ * stem what's left. `minLength` exists so callers with a shorter-token
+ * vocabulary (e.g. lexical search matching "qb") can opt into a lower floor
+ * without changing the default used everywhere else (fingerprinting, dedup).
  * @param {string} text
+ * @param {{minLength?: number}} [options]
  * @returns {string[]}
  */
-export function tokenize(text) {
+export function tokenize(text, { minLength = 3 } = {}) {
   if (!text) return [];
   const cleaned = String(text).toLowerCase().replace(/[^a-z0-9]/g, ' ');
   const out = [];
   for (const raw of cleaned.split(/\s+/)) {
-    if (!raw || raw.length < 3) continue;
+    if (!raw || raw.length < minLength) continue;
     if (STOPWORDS.has(raw)) continue;
     out.push(stem(raw));
   }

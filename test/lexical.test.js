@@ -128,6 +128,32 @@ test('loadTermExpansion returns the seeded synonym groups', () => {
   assert.ok(table.some((group) => group.includes('quickbooks') && group.includes('qbo')));
 });
 
+test('expandTerms(["quickbooks"]) includes the 2-char abbreviation "qb" and "qbo"', () => {
+  const expanded = expandTerms(['quickbooks']);
+  assert.ok(expanded.includes('qb'));
+  assert.ok(expanded.includes('qbo'));
+});
+
+// --- lexical tokenization floor (2 chars, not fingerprint's 3) ------------
+
+test('scoreDoc: a doc whose body mentions "QB" as a standalone token matches the term "qb"', () => {
+  const doc = makeDoc({ path: 'qb.mdx', body: 'Sync your QB account for invoicing.' });
+  const result = scoreDoc(doc, ['qb']);
+
+  assert.deepEqual(result.matched, ['qb']);
+  assert.ok(result.score > 0);
+});
+
+test('scoreDoc: a term that tokenizes to nothing does not lower coverage', () => {
+  const doc = makeDoc({ path: 'gizmo.mdx', title: 'Gizmo Setup' });
+  // "a" tokenizes to [] (below the 2-char floor), so it's not a usable term
+  // and must not count against coverage the way a real, unmatched term would.
+  const result = scoreDoc(doc, ['gizmo', 'a']);
+
+  assert.deepEqual(result.matched, ['gizmo']);
+  assert.equal(result.coverage, 1);
+});
+
 // --- scoreDocs: tie-break on boostPaths -----------------------------------
 
 test('scoreDocs: a path in boostPaths wins a tie', () => {
