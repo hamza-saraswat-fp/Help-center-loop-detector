@@ -1,0 +1,12 @@
+[
+  ["quickbooks", "qb", "qbo"],
+  ["invoice", "invoicing", "bill", "billing"],
+  ["tech", "technician", "service agent"],
+  ["job", "work order"],
+  ["estimate", "quote"],
+  ["customer", "client", "contact"],
+  ["tag", "label"],
+  ["team member", "user"],
+  ["engage", "phone system"],
+  ["pricebook", "price book", "catalog"]
+]
