@@ -17,7 +17,11 @@ git -C <dir> checkout
 ```
 
 On subsequent runs, when `<dir>/.git` already exists, it runs `git -C <dir> pull --ff-only`
-instead. Expected size: ~4 MB on disk, clone time on the order of seconds.
+instead.
+
+Measured against the real repo on 2026-09-15: 7.3 MB on disk (including `.git`), 787 `.mdx`
+files (282 `hidden: true`), 1,452 redirects in `docs.json`, about 2 seconds on a normal
+connection.
 
 If `GITHUB_TOKEN` is set, it's injected into the clone URL as
 `https://x-access-token:<token>@github.com/...` and is never written to a log line — only

@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { warn } from '../log.js';
 import { listMdxFiles } from './repo.js';
 import { pathToUrl, loadRedirects, normalizeHcUrl } from './redirects.js';
 
@@ -149,11 +150,22 @@ export function buildDocsIndex(dir, sha, { files = listMdxFiles(dir), read = fs.
   }
 
   let redirects = { exact: new Map(), prefixes: [] };
+  let raw = null;
   try {
-    const raw = read(path.join(dir, 'docs.json'), 'utf8');
-    redirects = loadRedirects(JSON.parse(raw));
-  } catch {
-    // No docs.json (or it's unreadable/malformed) -> no redirects known.
+    raw = read(path.join(dir, 'docs.json'), 'utf8');
+  } catch (err) {
+    // A missing docs.json is expected and stays silent; any other read
+    // failure (permissions, etc.) is worth a warning.
+    if (err?.code !== 'ENOENT') {
+      warn('docs', `failed to read docs.json: ${err?.message ?? err}`);
+    }
+  }
+  if (raw !== null) {
+    try {
+      redirects = loadRedirects(JSON.parse(raw));
+    } catch (err) {
+      warn('docs', `failed to parse docs.json: ${err?.message ?? err}`);
+    }
   }
 
   return { docs, byPath, redirects, sha };

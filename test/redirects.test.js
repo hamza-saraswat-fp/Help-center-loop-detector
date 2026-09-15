@@ -39,6 +39,14 @@ test('resolveRedirect matches a wildcard/prefix source', () => {
   );
 });
 
+test('resolveRedirect does not match a longer intercom id as a near-miss prefix', () => {
+  const redirects = loadRedirects(docsJson);
+  // The prefix rule is '/en/articles/1184690-' (with the trailing hyphen from the source's
+  // literal text before '*'). '11846900-foo' shares the leading digits '1184690' but the
+  // next character is '0', not '-', so it must not match.
+  assert.equal(resolveRedirect(redirects, '/en/articles/11846900-foo'), null);
+});
+
 test('normalizeHcUrl follows a two-hop chain (/a -> /b -> canonical)', () => {
   const redirects = loadRedirects(docsJson);
   assert.equal(normalizeHcUrl('/a', redirects), '/using-fieldpulse/customers/tags');
@@ -81,6 +89,11 @@ test('normalizeHcUrl on an unknown URL returns itself normalized, never throws',
   assert.equal(normalizeHcUrl('/no-such/page', redirects), '/no-such/page');
   assert.doesNotThrow(() => normalizeHcUrl(null, redirects));
   assert.doesNotThrow(() => normalizeHcUrl(undefined, redirects));
+});
+
+test('normalizeHcUrl leaves a near-miss wildcard id unchanged', () => {
+  const redirects = loadRedirects(docsJson);
+  assert.equal(normalizeHcUrl('/en/articles/11846900-foo', redirects), '/en/articles/11846900-foo');
 });
 
 test('normalizeHcUrl stops after 10 hops on a redirect loop', () => {

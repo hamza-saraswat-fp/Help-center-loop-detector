@@ -45,6 +45,21 @@ test('parseMdx body excludes the frontmatter block', () => {
   assert.ok(entry.body.includes('# Creating Your First Job'));
 });
 
+test('parseMdx round-trips a quoted description with an embedded colon and comma', () => {
+  const raw = [
+    '---',
+    'title: "Admin vs Team Manager"',
+    'description: "Compare Admin, Team Manager: what is different"',
+    '---',
+    '',
+    '# Admin vs Team Manager',
+    '',
+  ].join('\n');
+  const entry = parseMdx('using-fieldpulse/roles/admin-vs-team-manager.mdx', raw);
+  assert.equal(entry.title, 'Admin vs Team Manager');
+  assert.equal(entry.description, 'Compare Admin, Team Manager: what is different');
+});
+
 test('parseMdx defaults hidden to false and boost to 0 when absent', () => {
   const raw = readFixture('using-fieldpulse/customers/tags.mdx');
   const entry = parseMdx('using-fieldpulse/customers/tags.mdx', raw);
@@ -91,4 +106,43 @@ test('findByUrl resolves a redirected legacy URL to the entry', () => {
 test('findByUrl returns null for a URL with no matching doc', () => {
   const index = buildDocsIndex(FIXTURES_DIR, 'deadbeef');
   assert.equal(findByUrl(index, '/no-such/page'), null);
+});
+
+test('buildDocsIndex warns when docs.json exists but fails to parse', () => {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(' '));
+  try {
+    const read = (filePath, enc) => {
+      if (String(filePath).endsWith('docs.json')) return '{ this is not valid json';
+      return readFileSync(filePath, enc);
+    };
+    const index = buildDocsIndex(FIXTURES_DIR, 'deadbeef', { read });
+    assert.deepEqual(index.redirects, { exact: new Map(), prefixes: [] });
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(warnings.length > 0, 'expected a warning to be logged');
+  assert.ok(warnings.some((line) => line.includes('docs.json')));
+});
+
+test('buildDocsIndex stays silent when docs.json is simply missing', () => {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(' '));
+  try {
+    const read = (filePath, enc) => {
+      if (String(filePath).endsWith('docs.json')) {
+        const err = new Error('ENOENT: no such file or directory');
+        err.code = 'ENOENT';
+        throw err;
+      }
+      return readFileSync(filePath, enc);
+    };
+    const index = buildDocsIndex(FIXTURES_DIR, 'deadbeef', { read });
+    assert.deepEqual(index.redirects, { exact: new Map(), prefixes: [] });
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 0);
 });
