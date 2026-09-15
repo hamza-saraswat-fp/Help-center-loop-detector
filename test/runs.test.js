@@ -163,9 +163,9 @@ test('consecutiveSourceFailures stops at the first clean run', async () => {
   const { client } = makeClient({
     select: {
       data: [
-        { errors: [] },
-        { errors: [{ source: 'juju' }] },
-        { errors: [{ source: 'juju' }] },
+        { finished_at: '2026-09-15T02:00:00Z', errors: [] },
+        { finished_at: '2026-09-15T01:00:00Z', errors: [{ source: 'juju' }] },
+        { finished_at: '2026-09-15T00:00:00Z', errors: [{ source: 'juju' }] },
       ],
       error: null,
     },
@@ -177,7 +177,10 @@ test('consecutiveSourceFailures stops at the first clean run', async () => {
 
 test('consecutiveSourceFailures ignores errors about another source', async () => {
   const { client } = makeClient({
-    select: { data: [{ errors: [{ source: 'ava', message: 'juju' }] }], error: null },
+    select: {
+      data: [{ finished_at: '2026-09-15T02:00:00Z', errors: [{ source: 'ava', message: 'juju' }] }],
+      error: null,
+    },
   });
   const runs = createRunsRepo({ client });
 

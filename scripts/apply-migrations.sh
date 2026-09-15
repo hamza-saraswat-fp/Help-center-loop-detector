@@ -50,8 +50,12 @@ for path in "$migrations_dir"/*.sql; do
   # file and its `_migrations` record commit together, so a crash in between
   # cannot leave an applied file unrecorded and replay it next time.
   echo "[migrate] apply   $filename"
+  # -f rather than -c "\\i $path": psql's meta-command parser splits its
+  # argument on unquoted whitespace, so a checkout directory with a space in it
+  # would break. psql runs all -f and -c commands in order, inside the one
+  # transaction.
   psql "$DATABASE_URL" --single-transaction -v ON_ERROR_STOP=1 -q \
-    -c "\\i $path" \
+    -f "$path" \
     -c "insert into _migrations (filename) values ('$filename');"
   applied=$((applied + 1))
 done

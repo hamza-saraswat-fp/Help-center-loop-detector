@@ -87,7 +87,9 @@ export function createRunsRepo({ client }) {
       let count = 0;
       for (const row of data ?? []) {
         // Belt and braces: the filter above is what keeps the window honest,
-        // this is what keeps the count honest if the filter is ever lost.
+        // this is what keeps the count honest if the filter is ever lost. Every
+        // fixture in test/runs.test.js therefore carries finished_at; drop it
+        // from one and that test passes without reaching mentionsSource at all.
         if (!row?.finished_at) continue;
         if (!mentionsSource(row?.errors, source)) break;
         count += 1;
