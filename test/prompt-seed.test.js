@@ -35,8 +35,16 @@ test('the seed migration is exactly what the renderer produces', () => {
   assert.equal(rendered, seed);
 });
 
-test('the prompt contains no em-dashes', () => {
-  assert.ok(!prompt.includes('—'), 'em-dash found in the prompt text');
+test('the prompt is pure ASCII', () => {
+  // Wider than an em-dash guard on purpose: en-dashes, smart quotes and
+  // non-breaking spaces all survive a copy-paste from a doc and all of them
+  // have mangled a Juju prompt migration before.
+  const offenders = [...prompt].filter((ch) => ch.charCodeAt(0) > 126 || ch.charCodeAt(0) < 9);
+  assert.deepEqual(
+    offenders.map((ch) => `U+${ch.codePointAt(0).toString(16).padStart(4, '0')}`),
+    [],
+    'non-ASCII characters found in the prompt text'
+  );
 });
 
 test('the prompt states the whole contract the check depends on', () => {

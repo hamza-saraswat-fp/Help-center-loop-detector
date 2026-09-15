@@ -23,7 +23,7 @@
 -- `version` is TEXT. It is the literal string '1.0.0', never a computed
 -- max plus one.
 --
--- Verify after applying (chars must be 7238):
+-- Verify after applying (chars must be 7259):
 --   select slot_id, version, model, is_active, length(prompt_text) as chars
 --     from prompts where slot_id = 'gap_check';
 
@@ -85,7 +85,7 @@ When the truth kind is `none`, nobody has established the answer yet. Do not inv
 
 `should_say` and `proposed_change` are drafts for the help center, so write in its voice: short sentences, second person, plain words, no jargon, no marketing, no em-dashes. Say what the reader does and what happens. Match the surrounding article's tense and formatting.
 
-`paste_request` is one sentence a human can paste into a docs request without editing it. Start with the article title in quotation marks.
+`paste_request` is one sentence a human can paste into a docs request without editing it. Name the article title in quotation marks, as in the templates below.
 
 - For `INCORRECT` or `NEEDS_EDIT`: `In "Managing Customer Tags", replace the sentence "..." with "...".`
 - For `MISSING`: `Create a new article "..." under <category> covering ...`
