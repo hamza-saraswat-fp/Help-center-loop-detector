@@ -32,6 +32,10 @@ function makeClient(responses = {}) {
           chain.eq = [col, val];
           return q;
         },
+        not(col, op, val) {
+          chain.not = [col, op, val];
+          return q;
+        },
         order(col, opts) {
           chain.order = [col, opts];
           return q;
@@ -120,9 +124,9 @@ test('consecutiveSourceFailures counts the recent runs that name the source', as
   const { client, state } = makeClient({
     select: {
       data: [
-        { errors: [{ lane: 'sources', source: 'juju', message: 'timeout' }] },
-        { errors: [{ lane: 'sources', source: 'juju', message: 'timeout' }] },
-        { errors: [] },
+        { finished_at: '2026-09-15T02:00:00Z', errors: [{ lane: 'sources', source: 'juju', message: 'timeout' }] },
+        { finished_at: '2026-09-15T01:00:00Z', errors: [{ lane: 'sources', source: 'juju', message: 'timeout' }] },
+        { finished_at: '2026-09-15T00:00:00Z', errors: [] },
       ],
       error: null,
     },
@@ -133,6 +137,26 @@ test('consecutiveSourceFailures counts the recent runs that name the source', as
   assert.equal(state.selects[0].table, 'loop_runs');
   assert.deepEqual(state.selects[0].order, ['started_at', { ascending: false }]);
   assert.equal(state.selects[0].limit, 3);
+  // The caller's own run row already exists, with errors=[], and sorts first.
+  // Counting it would make every answer 0.
+  assert.deepEqual(state.selects[0].not, ['finished_at', 'is', null]);
+});
+
+test('consecutiveSourceFailures ignores the in-flight run asking the question', async () => {
+  const { client } = makeClient({
+    select: {
+      data: [
+        { finished_at: null, errors: [] },
+        { finished_at: '2026-09-15T02:00:00Z', errors: [{ source: 'juju' }] },
+        { finished_at: '2026-09-15T01:00:00Z', errors: [{ source: 'juju' }] },
+        { finished_at: '2026-09-15T00:00:00Z', errors: [{ source: 'juju' }] },
+      ],
+      error: null,
+    },
+  });
+  const runs = createRunsRepo({ client });
+
+  assert.equal(await runs.consecutiveSourceFailures('juju', { runs: 4 }), 3);
 });
 
 test('consecutiveSourceFailures stops at the first clean run', async () => {

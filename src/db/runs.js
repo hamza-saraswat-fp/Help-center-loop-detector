@@ -65,14 +65,20 @@ export function createRunsRepo({ client }) {
     }
   }
 
-  // How many of the most recent runs, counting back from the latest, recorded
-  // an error for this source. The run loop uses it to stop re-reporting a
-  // source that has been down for three runs in a row.
+  // How many of the most recent FINISHED runs, counting back from the latest,
+  // recorded an error for this source. The run loop uses it to stop
+  // re-reporting a source that has been down for three runs in a row.
+  //
+  // `finished_at is not null` is not a tidiness filter, it is the whole
+  // function working: the caller asks this mid-run, by which point startRun has
+  // already inserted its own row with errors=[], and that row sorts first. Left
+  // in, it ends the count on iteration one and the answer is always 0.
   async function consecutiveSourceFailures(source, { runs = DEFAULT_FAILURE_WINDOW } = {}) {
     try {
       const { data, error } = await client
         .from('loop_runs')
-        .select('errors')
+        .select('errors, finished_at')
+        .not('finished_at', 'is', null)
         .order('started_at', { ascending: false })
         .limit(runs);
 
@@ -80,6 +86,9 @@ export function createRunsRepo({ client }) {
 
       let count = 0;
       for (const row of data ?? []) {
+        // Belt and braces: the filter above is what keeps the window honest,
+        // this is what keeps the count honest if the filter is ever lost.
+        if (!row?.finished_at) continue;
         if (!mentionsSource(row?.errors, source)) break;
         count += 1;
       }

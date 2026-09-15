@@ -21,6 +21,12 @@ import { log, warn } from '../log.js';
 
 const DEFAULT_TTL_MS = 60_000;
 
+// "The database could not answer" and "the database answered: there is no
+// active prompt" are different failures and only the first one deserves the
+// stale cache. Someone deactivating a row is a deliberate act, and serving the
+// old text from cache forever would quietly override them.
+class NoActivePromptError extends Error {}
+
 export function createPromptLoader({ client, now = () => Date.now(), ttlMs = DEFAULT_TTL_MS }) {
   const cache = new Map(); // slotId -> { text, model, version, fetchedAt }
 
@@ -40,7 +46,7 @@ export function createPromptLoader({ client, now = () => Date.now(), ttlMs = DEF
         .maybeSingle();
 
       if (error) throw new Error(error.message);
-      if (!data) throw new Error(`No active prompt for slot_id='${slotId}'`);
+      if (!data) throw new NoActivePromptError(`No active prompt for slot_id='${slotId}'`);
 
       const entry = {
         text: data.prompt_text,
@@ -55,6 +61,12 @@ export function createPromptLoader({ client, now = () => Date.now(), ttlMs = DEF
       );
       return { text: entry.text, model: entry.model, version: entry.version };
     } catch (err) {
+      if (err instanceof NoActivePromptError) {
+        // Drop the entry too, so a fetch error on the next call cannot
+        // resurrect a prompt that was deliberately deactivated.
+        cache.delete(slotId);
+        throw err;
+      }
       if (cached) {
         warn('prompts', `fetch failed for '${slotId}', serving stale cache: ${err.message}`);
         return { text: cached.text, model: cached.model, version: cached.version };

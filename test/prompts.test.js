@@ -109,6 +109,42 @@ test('throws when no active row exists for the slot', async () => {
   await assert.rejects(() => loader.getActivePrompt('gap_check'), /gap_check/);
 });
 
+test('throws on a deactivated prompt even when a stale cache exists', async () => {
+  // Stale-on-error is for a database that cannot answer. A database that
+  // answers "there is no active prompt" has answered: someone deactivated the
+  // row on purpose, and serving the old one from cache forever would quietly
+  // override them.
+  const { client, state } = makeClient([
+    { data: ROW, error: null },
+    { data: null, error: null },
+  ]);
+  const { now, advance } = clock();
+  const loader = createPromptLoader({ client, now });
+
+  await loader.getActivePrompt('gap_check');
+  advance(60_001);
+
+  await assert.rejects(() => loader.getActivePrompt('gap_check'), /gap_check/);
+  assert.equal(state.fetches, 2);
+});
+
+test('drops the cached prompt once the row is deactivated', async () => {
+  const { client } = makeClient([
+    { data: ROW, error: null },
+    { data: null, error: null },
+    { data: null, error: { message: 'connection reset' } },
+  ]);
+  const { now, advance } = clock();
+  const loader = createPromptLoader({ client, now });
+
+  await loader.getActivePrompt('gap_check');
+  advance(60_001);
+  await assert.rejects(() => loader.getActivePrompt('gap_check'), /gap_check/);
+
+  // A later fetch error must not resurrect the deactivated prompt.
+  await assert.rejects(() => loader.getActivePrompt('gap_check'), /connection reset/);
+});
+
 test('reads the prompts table and never writes to it', async () => {
   const { client, state } = makeClient([{ data: ROW, error: null }]);
   const loader = createPromptLoader({ client });
