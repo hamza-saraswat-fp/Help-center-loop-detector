@@ -1,0 +1,66 @@
+[
+  {
+    "event_id": 5001,
+    "occurred_at": "2026-09-10T14:22:00Z",
+    "source": "juju",
+    "kind": "escalation",
+    "question": "Why does the invoice total not match the estimate after I convert it?",
+    "truth_answer": null,
+    "truth_kind": "none",
+    "cited_hc_urls": [],
+    "closest_article_url": null,
+    "category": "invoicing",
+    "source_link": "https://fieldpulse-support.slack.com/archives/C0EXAMPLE/p1757516520000100",
+    "pinged_at": "2026-09-10T14:25:00Z",
+    "needs_answer": true,
+    "detail": {
+      "escalation_type": "no_answer",
+      "failure_type": "incomplete",
+      "failure_confidence": 0.82,
+      "answer_text": null
+    }
+  },
+  {
+    "event_id": 5002,
+    "occurred_at": "2026-09-11T09:05:30Z",
+    "source": "juju",
+    "kind": "owner_answer",
+    "question": "Can I bulk-reassign jobs from one tech to another?",
+    "truth_answer": "Yes, from Schedule > select the jobs > Reassign > choose the new tech.",
+    "truth_kind": "human",
+    "cited_hc_urls": [
+      { "title": "Reassigning jobs", "url": "https://help.fieldpulse.com/using-fieldpulse/reassigning-jobs" },
+      { "title": "Scheduling overview", "url": "https://help.fieldpulse.com/using-fieldpulse/scheduling-overview" }
+    ],
+    "closest_article_url": null,
+    "category": "scheduling",
+    "source_link": "https://fieldpulse-support.slack.com/archives/C0EXAMPLE/p1757581530000200",
+    "pinged_at": null,
+    "needs_answer": false,
+    "detail": {
+      "answer_text": "Yes, from Schedule > select the jobs > Reassign > choose the new tech."
+    }
+  },
+  {
+    "event_id": 5003,
+    "occurred_at": "2026-09-12T18:40:12Z",
+    "source": "juju",
+    "kind": "doc_request",
+    "question": "Is there a doc explaining how tax rates are applied to line items vs the whole invoice?",
+    "truth_answer": null,
+    "truth_kind": "none",
+    "cited_hc_urls": [],
+    "closest_article_url": null,
+    "category": "billing",
+    "source_link": "https://fieldpulse-support.slack.com/archives/C0EXAMPLE/p1757659212000300",
+    "pinged_at": null,
+    "needs_answer": true,
+    "detail": {
+      "description": "Customer asked support to write up how per-line vs whole-invoice tax rates interact.",
+      "category": "billing",
+      "task_status": "open",
+      "thread_permalink": "https://fieldpulse-support.slack.com/archives/C0EXAMPLE/p1757659212000301",
+      "parent_feedback_id": 4890
+    }
+  }
+]

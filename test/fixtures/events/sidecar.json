@@ -1,0 +1,41 @@
+[
+  {
+    "event_id": 8801,
+    "occurred_at": "2026-09-09T11:15:00Z",
+    "source": "sidecar",
+    "kind": "thumbs_down",
+    "question": "How do I split a payment across two cards for one invoice?",
+    "truth_answer": "You can't split a card payment across two cards today, only cash + card.",
+    "truth_kind": "human",
+    "cited_hc_urls": null,
+    "closest_article_url": null,
+    "category": "payments",
+    "source_link": "https://sidecar.fieldpulse.com/admin/activity/8801"
+  },
+  {
+    "event_id": 8802,
+    "occurred_at": "2026-09-10T20:02:45Z",
+    "source": "sidecar",
+    "kind": "model_detected",
+    "question": "Does FieldPulse support recurring invoices for maintenance contracts?",
+    "truth_answer": null,
+    "truth_kind": "none",
+    "cited_hc_urls": "[\"https://help.fieldpulse.com/using-fieldpulse/x\"]",
+    "closest_article_url": null,
+    "category": "invoicing",
+    "source_link": "https://sidecar.fieldpulse.com/admin/activity/8802"
+  },
+  {
+    "event_id": 8803,
+    "occurred_at": "2026-09-11T07:48:19Z",
+    "source": "sidecar",
+    "kind": "hard_to_find",
+    "question": "Where do I turn off SMS reminders for a single customer?",
+    "truth_answer": null,
+    "truth_kind": "none",
+    "cited_hc_urls": null,
+    "closest_article_url": "https://help.fieldpulse.com/using-fieldpulse/customer-notification-preferences",
+    "category": "notifications",
+    "source_link": "https://sidecar.fieldpulse.com/admin/activity/8803"
+  }
+]
