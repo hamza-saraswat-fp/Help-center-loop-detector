@@ -23,7 +23,7 @@
 -- `version` is TEXT. It is the literal string '1.0.0', never a computed
 -- max plus one.
 --
--- Verify after applying (chars must be 6831):
+-- Verify after applying (chars must be 7238):
 --   select slot_id, version, model, is_active, length(prompt_text) as chars
 --     from prompts where slot_id = 'gap_check';
 
@@ -80,6 +80,8 @@ For `omitted` claims, both fields are null. If you cannot find the sentence, the
 When the truth kind is `none`, nobody has established the answer yet. Do not invent one. Set `truth_summary` to null and still judge coverage of the question: does the help center answer this question at all? A `MISSING` verdict with no known answer is useful, and it is honest.
 
 ## Writing the fix
+
+`target_article_path` is the repository path of the article the fix lands in, copied from the packet, or null for `MISSING` when no existing article is close enough to edit. Leave `target_article_url` null unless the packet gave you that article's public URL; it is derived from the path downstream. `says_now` is the sentence as it stands today, copied exactly, and is null when nothing stands there yet.
 
 `should_say` and `proposed_change` are drafts for the help center, so write in its voice: short sentences, second person, plain words, no jargon, no marketing, no em-dashes. Say what the reader does and what happens. Match the surrounding article's tense and formatting.
 

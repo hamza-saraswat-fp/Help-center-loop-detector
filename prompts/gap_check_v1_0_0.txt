@@ -49,6 +49,8 @@ When the truth kind is `none`, nobody has established the answer yet. Do not inv
 
 ## Writing the fix
 
+`target_article_path` is the repository path of the article the fix lands in, copied from the packet, or null for `MISSING` when no existing article is close enough to edit. Leave `target_article_url` null unless the packet gave you that article's public URL; it is derived from the path downstream. `says_now` is the sentence as it stands today, copied exactly, and is null when nothing stands there yet.
+
 `should_say` and `proposed_change` are drafts for the help center, so write in its voice: short sentences, second person, plain words, no jargon, no marketing, no em-dashes. Say what the reader does and what happens. Match the surrounding article's tense and formatting.
 
 `paste_request` is one sentence a human can paste into a docs request without editing it. Start with the article title in quotation marks.
