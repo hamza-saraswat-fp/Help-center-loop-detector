@@ -5,8 +5,15 @@ import assert from 'node:assert/strict';
 // apiKey), which validates process.env at import time unless this flag is
 // set. See test/mintlify.test.js for the same dance.
 process.env.HC_LOOP_SKIP_ENV_VALIDATION = 'true';
-const { createModelCaller } = await import('../src/check/llm.js');
+const { createModelCaller, buildOpenRouterClientOptions } = await import('../src/check/llm.js');
 const { runWithTrace, getTrace } = await import('../src/trace.js');
+
+test('buildOpenRouterClientOptions sets maxRetries: 0 (no retries inside a run)', () => {
+  const options = buildOpenRouterClientOptions('some-key');
+  assert.equal(options.maxRetries, 0);
+  assert.equal(options.baseURL, 'https://openrouter.ai/api/v1');
+  assert.equal(options.apiKey, 'some-key');
+});
 
 function fakeClientFactory({ create }) {
   return () => ({

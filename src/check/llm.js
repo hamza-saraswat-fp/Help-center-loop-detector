@@ -13,15 +13,30 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEFAULT_MAX_TOKENS = 2000;
 const DEFAULT_TIMEOUT_MS = 90_000;
 
-function defaultClientFactory({ apiKey }) {
-  return new OpenAI({
+/**
+ * The options `new OpenAI(...)` is constructed with. Exported (rather than
+ * left inline) so a test can assert `maxRetries: 0` without mocking the SDK
+ * constructor itself.
+ * @param {string} apiKey
+ */
+export function buildOpenRouterClientOptions(apiKey) {
+  return {
     apiKey,
     baseURL: OPENROUTER_BASE_URL,
+    // The SDK retries transient errors (429/5xx) twice by default. Global
+    // Constraints: no retries inside a run -- a run that starts over already
+    // handles the next hourly pass, and a hidden retry here would double a
+    // cost we're supposed to be able to account for exactly.
+    maxRetries: 0,
     defaultHeaders: {
       'HTTP-Referer': 'https://github.com/hamza-saraswat-fp/Help-center-loop-detector',
       'X-Title': 'Help Center Loop',
     },
-  });
+  };
+}
+
+function defaultClientFactory({ apiKey }) {
+  return new OpenAI(buildOpenRouterClientOptions(apiKey));
 }
 
 /**
