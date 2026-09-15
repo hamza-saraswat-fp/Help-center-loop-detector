@@ -44,10 +44,15 @@ for path in "$migrations_dir"/*.sql; do
     continue
   fi
 
+  # One psql invocation, one transaction, both statements. Two things depend on
+  # that: a migration that fails halfway rolls back rather than leaving a
+  # half-applied schema that makes the next run die on "already exists", and the
+  # file and its `_migrations` record commit together, so a crash in between
+  # cannot leave an applied file unrecorded and replay it next time.
   echo "[migrate] apply   $filename"
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$path"
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c \
-    "insert into _migrations (filename) values ('$filename');"
+  psql "$DATABASE_URL" --single-transaction -v ON_ERROR_STOP=1 -q \
+    -c "\\i $path" \
+    -c "insert into _migrations (filename) values ('$filename');"
   applied=$((applied + 1))
 done
 
