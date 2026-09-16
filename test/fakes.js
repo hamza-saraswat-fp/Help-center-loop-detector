@@ -92,3 +92,58 @@ export function fakeOnyxFetch({
     };
   };
 }
+
+/**
+ * A scriptable fake for supabase-js's query builder, used by test/db.test.js.
+ * `script` maps "table.op" (op: select|insert|upsert|update) to a response
+ * `{data, error}`, or a function `(call) => {data, error}` computed per call.
+ * Every terminal use (awaiting the chain directly, or calling `.single()` /
+ * `.maybeSingle()`) resolves to that response. Every call is recorded on
+ * `fake.calls` as `{table, op, payload, filters, order, limit, single}`.
+ * @param {object} [script]
+ * @returns {{client: object, calls: object[]}}
+ */
+export function fakeSupabase(script = {}) {
+  const calls = [];
+
+  function respond(call) {
+    const entry = script[`${call.table}.${call.op}`];
+    const result = typeof entry === 'function' ? entry(call) : entry;
+    return result ?? { data: null, error: null };
+  }
+
+  function makeChain(call) {
+    const chain = {
+      eq: (...args) => (call.filters.push({ method: 'eq', args }), chain),
+      in: (...args) => (call.filters.push({ method: 'in', args }), chain),
+      is: (...args) => (call.filters.push({ method: 'is', args }), chain),
+      gte: (...args) => (call.filters.push({ method: 'gte', args }), chain),
+      order: (col, opts) => ((call.order = [col, opts]), chain),
+      limit: (n) => ((call.limit = n), chain),
+      select: (cols) => ((call.select = cols), chain),
+      single: async () => ((call.single = 'single'), respond(call)),
+      maybeSingle: async () => ((call.single = 'maybeSingle'), respond(call)),
+      then: (resolve, reject) => Promise.resolve(respond(call)).then(resolve, reject),
+    };
+    return chain;
+  }
+
+  function start(table, op, payload, extra) {
+    const call = { table, op, payload, filters: [], order: null, limit: null, single: null, ...extra };
+    calls.push(call);
+    return makeChain(call);
+  }
+
+  const client = {
+    from(table) {
+      return {
+        select: (cols) => start(table, 'select', undefined, { select: cols }),
+        insert: (payload) => start(table, 'insert', payload),
+        upsert: (payload, opts) => start(table, 'upsert', payload, { onConflict: opts?.onConflict }),
+        update: (patch) => start(table, 'update', patch),
+      };
+    },
+  };
+
+  return { client, calls };
+}
