@@ -193,6 +193,25 @@ export function applyRetrievalRules(parsed, { index, citedPaths = [] } = {}) {
   const allSupported =
     claims.length > 0 && claims.every((c) => c?.status === 'supported' && c?.article_path != null);
 
+  // Second consistency rule: MISSING means no article covers this. If the
+  // model itself found a sentence in an article we gave it that supports part
+  // of the answer, some article covers the topic, and the prompt's own
+  // definition makes that NEEDS_EDIT on that article. Seen live: two claims
+  // supported by the offline-mode overview, answered_by left empty, verdict
+  // MISSING. The downgrade keeps the card and points it at the right file.
+  let missingDowngraded = false;
+  if (result.verdict === 'MISSING') {
+    const supportedKnown = claims
+      .filter((c) => c?.status === 'supported')
+      .map((c) => toIndexPath(c.article_path))
+      .filter((p) => p !== null && Boolean(index?.byPath?.get(p)));
+    if (supportedKnown.length > 0) {
+      result.verdict = 'NEEDS_EDIT';
+      missingDowngraded = true;
+      if (!result.target_article_path) result.target_article_path = supportedKnown[0];
+    }
+  }
+
   if (result.verdict === 'NOT_A_GAP' && (allSupported || answeredKnown)) {
     const normalizedCited = new Set(
       citedPaths.map(toIndexPath).filter((p) => p !== null),
@@ -219,6 +238,7 @@ export function applyRetrievalRules(parsed, { index, citedPaths = [] } = {}) {
     hidden_target: hiddenTarget,
     uncited_support: uncitedSupport,
     answered_by_override: answeredByOverride,
+    missing_downgraded_to_edit: missingDowngraded,
   };
   return result;
 }
