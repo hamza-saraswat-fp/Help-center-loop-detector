@@ -10,6 +10,7 @@ const VERSIONS = [
   { version: '1.0.0', migration: '0002_seed_gap_check_v1_0_0.sql', description: 'Gap check v1' },
   { version: '1.0.1', migration: '0003_seed_gap_check_v1_0_1.sql', description: 'Gap check v1.0.1: MISSING names the article the fix lands in' },
   { version: '1.0.2', migration: '0004_seed_gap_check_v1_0_2.sql', description: 'Gap check v1.0.2: a covered question is NOT_A_GAP even if another article omits it' },
+  { version: '1.0.3', migration: '0005_seed_gap_check_v1_0_3.sql', description: 'Gap check v1.0.3: ordered decision with answered_by; code enforces it' },
 ];
 
 for (const v of VERSIONS) {
@@ -62,4 +63,11 @@ test('1.0.1: MISSING may name an existing article as the target', () => {
 test('1.0.2: a covered question stays NOT_A_GAP', () => {
   const prompt = readFileSync(fileURLToPath(new URL('../prompts/gap_check_v1_0_2.txt', import.meta.url)), 'utf8');
   assert.ok(prompt.includes('If any article in the packet answers the question, the verdict is `NOT_A_GAP`'));
+});
+
+test('1.0.3: the prompt asks for answered_by and decides in order', () => {
+  const prompt = readFileSync(fileURLToPath(new URL('../prompts/gap_check_v1_0_3.txt', import.meta.url)), 'utf8');
+  assert.ok(prompt.includes('"answered_by"'));
+  assert.ok(prompt.includes('Decide in this order'));
+  assert.ok(!prompt.includes('and the answering tool cited that article'));
 });

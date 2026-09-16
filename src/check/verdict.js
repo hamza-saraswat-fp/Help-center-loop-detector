@@ -82,6 +82,14 @@ function coerceClaimStatus(value) {
   return CLAIM_STATUSES.includes(value) ? value : 'omitted';
 }
 
+function coerceAnsweredBy(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const article_path = coerceString(value.article_path);
+  const sentence = coerceString(value.sentence);
+  if (!article_path || !sentence) return null;
+  return { article_path, sentence };
+}
+
 function coerceClaims(value) {
   if (!Array.isArray(value)) return [];
   return value.map((claim) => ({
@@ -132,6 +140,7 @@ export function extractVerdict(text) {
     proposed_change: coerceString(parsed.proposed_change),
     paste_request: coerceString(parsed.paste_request),
     confidence: coerceConfidence(parsed.confidence),
+    answered_by: coerceAnsweredBy(parsed.answered_by),
     claims: coerceClaims(parsed.claims),
   };
 }
@@ -164,17 +173,37 @@ export function applyRetrievalRules(parsed, { index, citedPaths = [] } = {}) {
   const result = { ...parsed };
   let hiddenTarget = false;
   let uncitedSupport = false;
+  let answeredByOverride = false;
+
+  // Consistency rule: the model must name the sentence that answers the
+  // question in `answered_by`. If it did, and that article is one we handed
+  // it, a MISSING verdict contradicts its own evidence (seen live: three
+  // supported claims from the offline-mode article, then MISSING over a
+  // missing table row elsewhere). The verdict becomes NOT_A_GAP and the
+  // answering article becomes the target when none was named.
+  const answeredPath = toIndexPath(parsed?.answered_by?.article_path);
+  const answeredKnown = answeredPath !== null && Boolean(index?.byPath?.get(answeredPath));
+  if (parsed?.verdict === 'MISSING' && answeredKnown) {
+    result.verdict = 'NOT_A_GAP';
+    answeredByOverride = true;
+    if (!result.target_article_path) result.target_article_path = answeredPath;
+  }
 
   const claims = Array.isArray(parsed?.claims) ? parsed.claims : [];
   const allSupported =
     claims.length > 0 && claims.every((c) => c?.status === 'supported' && c?.article_path != null);
 
-  if (parsed?.verdict === 'NOT_A_GAP' && allSupported) {
+  if (result.verdict === 'NOT_A_GAP' && (allSupported || answeredKnown)) {
     const normalizedCited = new Set(
       citedPaths.map(toIndexPath).filter((p) => p !== null),
     );
     const supportingPaths = [
-      ...new Set(claims.map((c) => toIndexPath(c.article_path)).filter((p) => p !== null)),
+      ...new Set(
+        [
+          ...(allSupported ? claims.map((c) => toIndexPath(c.article_path)) : []),
+          ...(answeredKnown ? [answeredPath] : []),
+        ].filter((p) => p !== null),
+      ),
     ];
 
     const anyCited = supportingPaths.some((p) => normalizedCited.has(p));
@@ -186,6 +215,10 @@ export function applyRetrievalRules(parsed, { index, citedPaths = [] } = {}) {
     }
   }
 
-  result.evidence_flags = { hidden_target: hiddenTarget, uncited_support: uncitedSupport };
+  result.evidence_flags = {
+    hidden_target: hiddenTarget,
+    uncited_support: uncitedSupport,
+    answered_by_override: answeredByOverride,
+  };
   return result;
 }

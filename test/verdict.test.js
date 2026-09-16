@@ -146,7 +146,7 @@ test('applyRetrievalRules: NOT_A_GAP + all supported + uncited -> UNFINDABLE', (
   const index = fakeIndex([['a.mdx', { hidden: false }]]);
   const result = applyRetrievalRules(parsed, { index, citedPaths: ['/b'] });
   assert.equal(result.verdict, 'UNFINDABLE');
-  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: true });
+  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: true, answered_by_override: false });
 });
 
 test('applyRetrievalRules: NOT_A_GAP + all supported + uncited + hidden doc -> HIDDEN', () => {
@@ -157,7 +157,7 @@ test('applyRetrievalRules: NOT_A_GAP + all supported + uncited + hidden doc -> H
   const index = fakeIndex([['a.mdx', { hidden: true }]]);
   const result = applyRetrievalRules(parsed, { index, citedPaths: [] });
   assert.equal(result.verdict, 'HIDDEN');
-  assert.deepEqual(result.evidence_flags, { hidden_target: true, uncited_support: true });
+  assert.deepEqual(result.evidence_flags, { hidden_target: true, uncited_support: true, answered_by_override: false });
 });
 
 test('applyRetrievalRules: NEEDS_EDIT unchanged, evidence_flags present', () => {
@@ -165,7 +165,7 @@ test('applyRetrievalRules: NEEDS_EDIT unchanged, evidence_flags present', () => 
   const index = fakeIndex([]);
   const result = applyRetrievalRules(parsed, { index, citedPaths: [] });
   assert.equal(result.verdict, 'NEEDS_EDIT');
-  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: false });
+  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: false, answered_by_override: false });
 });
 
 test('applyRetrievalRules: claims supported but cited -> unchanged', () => {
@@ -176,7 +176,7 @@ test('applyRetrievalRules: claims supported but cited -> unchanged', () => {
   const index = fakeIndex([['a.mdx', { hidden: false }]]);
   const result = applyRetrievalRules(parsed, { index, citedPaths: ['/a'] });
   assert.equal(result.verdict, 'NOT_A_GAP');
-  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: false });
+  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: false, answered_by_override: false });
 });
 
 test('applyRetrievalRules: never throws on missing index entries', () => {
@@ -186,4 +186,45 @@ test('applyRetrievalRules: never throws on missing index entries', () => {
   };
   const result = applyRetrievalRules(parsed, { index: fakeIndex([]), citedPaths: [] });
   assert.equal(result.verdict, 'UNFINDABLE');
+});
+
+test('extractVerdict keeps a well-formed answered_by and drops a partial one', () => {
+  const ok = extractVerdict(JSON.stringify({ destination: 'help_center', verdict: 'NOT_A_GAP', answered_by: { article_path: 'a.mdx', sentence: 'Yes.' }, claims: [] }));
+  assert.deepEqual(ok.answered_by, { article_path: 'a.mdx', sentence: 'Yes.' });
+  const partial = extractVerdict(JSON.stringify({ destination: 'help_center', verdict: 'MISSING', answered_by: { article_path: 'a.mdx' }, claims: [] }));
+  assert.equal(partial.answered_by, null);
+});
+
+test('applyRetrievalRules: MISSING with a known answered_by becomes NOT_A_GAP and targets that article', () => {
+  const index = fakeIndex([['offline-mode/estimates-invoices-offline-mode.mdx', { hidden: false }]]);
+  const parsed = { verdict: 'MISSING', target_article_path: null, answered_by: { article_path: 'offline-mode/estimates-invoices-offline-mode.mdx', sentence: 'x' }, claims: [{ claim: 'c', status: 'omitted', article_path: null, sentence: null }] };
+  const r = applyRetrievalRules(parsed, { index, citedPaths: ['/offline-mode/estimates-invoices-offline-mode'] });
+  assert.equal(r.verdict, 'NOT_A_GAP');
+  assert.equal(r.target_article_path, 'offline-mode/estimates-invoices-offline-mode.mdx');
+  assert.equal(r.evidence_flags.answered_by_override, true);
+  assert.equal(r.evidence_flags.uncited_support, false);
+});
+
+test('applyRetrievalRules: the override still routes an uncited answering article to UNFINDABLE or HIDDEN', () => {
+  const visible = fakeIndex([['a.mdx', { hidden: false }]]);
+  const r1 = applyRetrievalRules({ verdict: 'MISSING', answered_by: { article_path: 'a.mdx', sentence: 'x' }, claims: [] }, { index: visible, citedPaths: [] });
+  assert.equal(r1.verdict, 'UNFINDABLE');
+  const hidden = fakeIndex([['a.mdx', { hidden: true }]]);
+  const r2 = applyRetrievalRules({ verdict: 'MISSING', answered_by: { article_path: 'a.mdx', sentence: 'x' }, claims: [] }, { index: hidden, citedPaths: [] });
+  assert.equal(r2.verdict, 'HIDDEN');
+});
+
+test('applyRetrievalRules: answered_by naming an article not in the index does not override', () => {
+  const index = fakeIndex([['a.mdx', { hidden: false }]]);
+  const r = applyRetrievalRules({ verdict: 'MISSING', answered_by: { article_path: 'nope.mdx', sentence: 'x' }, claims: [] }, { index, citedPaths: [] });
+  assert.equal(r.verdict, 'MISSING');
+  assert.equal(r.evidence_flags.answered_by_override, false);
+});
+
+test('applyRetrievalRules: NEEDS_EDIT and INCORRECT are never overridden by answered_by', () => {
+  const index = fakeIndex([['a.mdx', { hidden: false }]]);
+  for (const verdict of ['NEEDS_EDIT', 'INCORRECT']) {
+    const r = applyRetrievalRules({ verdict, answered_by: { article_path: 'a.mdx', sentence: 'x' }, claims: [] }, { index, citedPaths: [] });
+    assert.equal(r.verdict, verdict);
+  }
 });
