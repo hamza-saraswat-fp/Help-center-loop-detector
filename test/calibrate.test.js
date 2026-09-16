@@ -220,7 +220,7 @@ test('renderReport contains the PASS line, both cohort tables, false-positive ro
   assert.match(report, /## Gap cohort HIDDEN hits/);
   assert.match(report, /2026-09-16/);
   assert.match(report, /abc1234/);
-  assert.doesNotMatch(report, /—/);
+  assert.doesNotMatch(report, /\u2014/);
 });
 
 test('renderReport FAIL line and lists control false positives with case_id, verdict, confidence, target path', () => {
@@ -257,7 +257,7 @@ test('renderReport FAIL line and lists control false positives with case_id, ver
   assert.match(report, /billing\/invoices\.mdx/);
   assert.match(report, /gap-1/);
   assert.match(report, /foo\/bar\.mdx/);
-  assert.doesNotMatch(report, /—/);
+  assert.doesNotMatch(report, /\u2014/);
 
   // Question is truncated to 120 chars in the false-positive table.
   const longLine = report.split('\n').find((l) => l.includes('ctl-2'));
