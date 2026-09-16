@@ -43,3 +43,52 @@ export function fakePromptLoader(config = { text: 'SYSTEM', model: 'test/model',
 export function fakeMintlify(hits = []) {
   return async (query, opts) => (typeof hits === 'function' ? hits(query, opts) : hits);
 }
+
+/**
+ * A fake `fetchImpl` for src/onyx.js's two-call chat flow: POST
+ * .../create-chat-session (answered with `session`, a plain JSON body) then
+ * POST .../send-chat-message (answered as an NDJSON stream: `body` is an
+ * async iterable of Uint8Array chunks, one per line in `streamLines`).
+ * Both responses default to `ok:true`/status 200; pass `sessionStatus` /
+ * `streamStatus` to simulate a non-2xx from either call. Pass `calls` (an
+ * array) to capture `{url, opts}` for every invocation, e.g. to assert both
+ * calls shared the same AbortSignal.
+ * @param {{session?: object, streamLines?: string[], sessionStatus?: number,
+ *   streamStatus?: number, calls?: Array<object>}} [config]
+ * @returns {(url: string, opts: object) => Promise<object>}
+ */
+export function fakeOnyxFetch({
+  session = { chat_session_id: 'sess-1' },
+  streamLines = [],
+  sessionStatus = 200,
+  streamStatus = 200,
+  calls,
+} = {}) {
+  const encoder = new TextEncoder();
+  return async (url, opts) => {
+    if (calls) calls.push({ url, opts });
+
+    if (String(url).includes('create-chat-session')) {
+      const ok = sessionStatus >= 200 && sessionStatus < 300;
+      return {
+        ok,
+        status: sessionStatus,
+        json: async () => session,
+        text: async () => JSON.stringify(session),
+      };
+    }
+
+    // send-chat-message: NDJSON stream.
+    const ok = streamStatus >= 200 && streamStatus < 300;
+    return {
+      ok,
+      status: streamStatus,
+      text: async () => '',
+      body: (async function* () {
+        for (const line of streamLines) {
+          yield encoder.encode(`${line}\n`);
+        }
+      })(),
+    };
+  };
+}

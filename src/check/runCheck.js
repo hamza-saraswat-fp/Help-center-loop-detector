@@ -11,6 +11,7 @@ import { extractVerdict, applyRetrievalRules } from './verdict.js';
 import { getActivePrompt as defaultGetActivePrompt } from '../db/prompts.js';
 import { callModel as defaultCallModel } from './llm.js';
 import { searchMintlify as defaultSearchMintlify } from '../docs/mintlify.js';
+import { corroborate as defaultCorroborate } from '../onyx.js';
 import { addPromptUse } from '../trace.js';
 
 /** Thrown by runCheck; `.stage` says which step failed. */
@@ -67,7 +68,7 @@ export function createRunCheck({
   getActivePrompt = defaultGetActivePrompt,
   callModel = defaultCallModel,
   searchMintlify = async () => [],
-  corroborate = async () => ({ mode: 'off', hits: null }),
+  corroborate = defaultCorroborate,
   categoryMap = loadCategoryMap(),
   expansionTable = loadTermExpansion(),
   now = () => new Date(),
@@ -274,7 +275,6 @@ export function createRunCheck({
 }
 
 // The module-level default: real prompt loader, real model caller, real
-// Mintlify search. `corroborate` stays the inert stub above -- src/onyx.js
-// doesn't exist yet (a later task) -- and Task 13's orchestrator can pass a
-// real one once it does.
+// Mintlify search, real Onyx corroboration (src/onyx.js's module-level
+// `corroborate`, which fails open per ONYX_MODE).
 export const runCheck = createRunCheck({ searchMintlify: defaultSearchMintlify });
