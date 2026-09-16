@@ -95,9 +95,22 @@ test('extractVerdict: unknown verdict -> whole result null', () => {
   assert.equal(result, null);
 });
 
-test('extractVerdict: unknown destination -> help_center', () => {
-  const result = extractVerdict(JSON.stringify(baseJson({ destination: 'somewhere' })));
-  assert.equal(result.destination, 'help_center');
+// `help_center` is the one destination that produces a posted card, so an
+// unparseable destination must not fail open into it. A null destination is a
+// parse failure, which puts the reply on runCheck's three-strike budget.
+test('extractVerdict: unknown destination -> whole result null', () => {
+  assert.equal(extractVerdict(JSON.stringify(baseJson({ destination: 'somewhere' }))), null);
+});
+
+test('extractVerdict: missing destination -> whole result null', () => {
+  const { destination, ...withoutDestination } = baseJson();
+  void destination;
+  assert.equal(extractVerdict(JSON.stringify(withoutDestination)), null);
+});
+
+test('extractVerdict: internal and none are still accepted', () => {
+  assert.equal(extractVerdict(JSON.stringify(baseJson({ destination: 'internal' }))).destination, 'internal');
+  assert.equal(extractVerdict(JSON.stringify(baseJson({ destination: 'none' }))).destination, 'none');
 });
 
 test('extractVerdict: claim status outside the list -> omitted', () => {
