@@ -9,6 +9,7 @@ const rendererPath = fileURLToPath(new URL('../scripts/render-prompt-seed.js', i
 const VERSIONS = [
   { version: '1.0.0', migration: '0002_seed_gap_check_v1_0_0.sql', description: 'Gap check v1' },
   { version: '1.0.1', migration: '0003_seed_gap_check_v1_0_1.sql', description: 'Gap check v1.0.1: MISSING names the article the fix lands in' },
+  { version: '1.0.2', migration: '0004_seed_gap_check_v1_0_2.sql', description: 'Gap check v1.0.2: a covered question is NOT_A_GAP even if another article omits it' },
 ];
 
 for (const v of VERSIONS) {
@@ -56,4 +57,9 @@ test('1.0.1: MISSING may name an existing article as the target', () => {
   const prompt = readFileSync(fileURLToPath(new URL('../prompts/gap_check_v1_0_1.txt', import.meta.url)), 'utf8');
   assert.ok(prompt.includes('For `MISSING`, set it whenever the fix belongs in an existing article'));
   assert.ok(prompt.includes('add a section'));
+});
+
+test('1.0.2: a covered question stays NOT_A_GAP', () => {
+  const prompt = readFileSync(fileURLToPath(new URL('../prompts/gap_check_v1_0_2.txt', import.meta.url)), 'utf8');
+  assert.ok(prompt.includes('If any article in the packet answers the question, the verdict is `NOT_A_GAP`'));
 });
