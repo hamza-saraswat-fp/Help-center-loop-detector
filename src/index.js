@@ -8,6 +8,7 @@ import { parseArgs } from './args.js';
 import { run } from './run.js';
 import { log, error } from './log.js';
 import { redactSecrets } from './util/redact.js';
+import { preflight, formatPreflight } from './preflight.js';
 
 // A stray rejection in a settle-adjacent path would otherwise kill the
 // process with Node's own warning and no `[lane]` line, which is the one
@@ -29,6 +30,11 @@ process.on('uncaughtException', (err) => {
   fatal('uncaught exception', err);
   process.exit(1);
 });
+
+// First line of every run log: the two host facts that have each taken a
+// deploy down (Node below 22, no git binary). Cheap, and it turns a clone
+// error twenty lines down into an obvious line one.
+log('index', formatPreflight(preflight()));
 
 // A bad flag is an operator typo, not a crash: one `[index]` line naming the
 // flag, before run() opens anything.

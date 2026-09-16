@@ -1,7 +1,15 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "watchPatterns": ["src/**", "prompts/**", "config/**", "package.json"]
+    "builder": "DOCKERFILE",
+    "watchPatterns": [
+      "src/**",
+      "prompts/**",
+      "config/**",
+      "package.json",
+      "package-lock.json",
+      "Dockerfile"
+    ]
   },
   "deploy": {
     "cronSchedule": "0 * * * *",
