@@ -198,7 +198,14 @@ export function createMintlifyClient({
     }
   }
 
-  return { connect, search, close };
+  // Whether this run's `search` can do anything: `search` returns [] both when
+  // it found nothing and when there is no connection, and the card's evidence
+  // line needs to tell those apart (see runCheck's `mintlifyAvailable`).
+  function isAvailable() {
+    return Boolean(client && searchToolName);
+  }
+
+  return { connect, search, close, isAvailable };
 }
 
 // ---------------------------------------------------------------------------

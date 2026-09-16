@@ -765,7 +765,11 @@ export async function run(opts = {}) {
     mintlify,
     // The check's Mintlify lane is this run's client, so the one MCP
     // connection opened at the top of the run is the one every check reuses.
-    runCheck: createRunCheck({ searchMintlify: (query, searchOpts) => mintlify.search(query, searchOpts) }),
+    runCheck: createRunCheck({
+      searchMintlify: (query, searchOpts) => mintlify.search(query, searchOpts),
+      // A thunk, not a value: this runs before the client has connected.
+      mintlifyAvailable: () => mintlify.isAvailable(),
+    }),
     events: createEventsRepo({ client }),
     candidates: createCandidatesRepo({ client }),
     actions: createActionsRepo({ client }),

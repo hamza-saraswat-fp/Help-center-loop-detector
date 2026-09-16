@@ -306,3 +306,38 @@ test('a reply with a question_paraphrase keeps the model\'s own wording', async 
 
   assert.equal(result.question_paraphrase, 'How do tags work?');
 });
+
+// --- final review: M4, the mintlify query's skipped flag --------------------
+
+test('an unavailable Mintlify client marks its query entry skipped', async () => {
+  const index = buildIndex();
+  const runCheck = createRunCheck(baseDeps({ mintlifyAvailable: false }));
+
+  const result = await runCheck(juju({ question: 'How do tags work?' }), index);
+
+  const mintlifyQuery = result.evidence.queries.find((q) => q.kind === 'mintlify');
+  assert.equal(mintlifyQuery.skipped, true);
+});
+
+test('an available Mintlify client leaves its query entry counted', async () => {
+  const index = buildIndex();
+  const runCheck = createRunCheck(baseDeps());
+
+  const result = await runCheck(juju({ question: 'How do tags work?' }), index);
+
+  const mintlifyQuery = result.evidence.queries.find((q) => q.kind === 'mintlify');
+  assert.equal(mintlifyQuery.skipped, undefined);
+});
+
+test('mintlifyAvailable can be a thunk read per check', async () => {
+  const index = buildIndex();
+  let connected = true;
+  const runCheck = createRunCheck(baseDeps({ mintlifyAvailable: () => connected }));
+
+  const first = await runCheck(juju({ question: 'How do tags work?' }), index);
+  connected = false;
+  const second = await runCheck(juju({ question: 'How do tags work?' }), index);
+
+  assert.equal(first.evidence.queries.find((q) => q.kind === 'mintlify').skipped, undefined);
+  assert.equal(second.evidence.queries.find((q) => q.kind === 'mintlify').skipped, true);
+});

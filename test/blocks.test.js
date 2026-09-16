@@ -397,3 +397,23 @@ test('ownersFor: falls back to general when category is unmapped', () => {
   assert.deepEqual(ownersFor('unmapped-category', mapping), ['U2']);
   assert.deepEqual(ownersFor('using-fieldpulse', mapping), ['U1']);
 });
+
+// --- final review: M4, a skipped Mintlify query must not be counted ---------
+
+test('buildCandidateCard: a skipped mintlify query is not counted in the evidence line', () => {
+  const candidate = baseCandidate({
+    evidence: {
+      queries: [
+        { kind: 'question', terms: ['tag'] },
+        { kind: 'answer', terms: [], skipped: true },
+        { kind: 'category', dir: 'using-fieldpulse', terms: ['tag'] },
+        { kind: 'mintlify', query: 'do tags block scheduling?', skipped: true },
+      ],
+      files_read: [],
+      closest_match: { path: null },
+    },
+    confidence: null,
+  });
+  const card = buildCandidateCard({ candidate, linked: linkedFixture(), now: NOW });
+  assert.match(card.text, /searched 2 ways/);
+});
