@@ -65,7 +65,9 @@ function isDateOnly(value) {
 async function pullParents(supabase, fromIso, toIso) {
   const { data, error } = await supabase
     .from('juju_feedback')
-    .select('id, question, answer_text, answer_confidence, category, escalated_at, trace, created_at')
+    .select(
+      'id, question, answer_text, answer_confidence, category, escalated_at, trace, created_at, mintlify_sources',
+    )
     .is('parent_feedback_id', null)
     .is('vote', null)
     .is('star_rating', null)
