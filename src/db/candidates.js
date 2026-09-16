@@ -141,20 +141,35 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
     }
   }
 
-  async function listByStatus(statuses, { limit = 100 } = {}) {
+  // `since` is a query filter rather than something the caller filters out of
+  // the result, because `limit` is applied by Postgres first: with the rows
+  // ordered created_at ascending, a caller that wanted "this week's logged
+  // candidates" out of a table with more than `limit` older ones would get a
+  // page of ancient rows and filter every one of them away.
+  async function listByStatus(statuses, { limit = 100, since = null } = {}) {
     try {
-      const { data, error } = await client
-        .from('gap_candidates')
-        .select('*')
-        .in('status', statuses)
-        .order('created_at', { ascending: true })
-        .limit(limit);
+      let query = client.from('gap_candidates').select('*').in('status', statuses);
+      if (since) query = query.gte('created_at', since);
+
+      const { data, error } = await query.order('created_at', { ascending: true }).limit(limit);
 
       if (error) throw new Error(error.message);
       return data ?? [];
     } catch (err) {
       logError('db', `listByStatus(${statuses}) failed: ${err.message}`);
       return [];
+    }
+  }
+
+  async function findById(id) {
+    try {
+      const { data, error } = await client.from('gap_candidates').select('*').eq('id', id).maybeSingle();
+
+      if (error) throw new Error(error.message);
+      return data ?? null;
+    } catch (err) {
+      logError('db', `findById(${id}) failed: ${err.message}`);
+      return null;
     }
   }
 
@@ -176,6 +191,7 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
 
   return {
     findByFingerprint,
+    findById,
     findNearDuplicate,
     insertCandidate,
     mergeEventIntoCandidate,
@@ -197,6 +213,10 @@ function repo() {
 
 export function findByFingerprint(hash) {
   return repo().findByFingerprint(hash);
+}
+
+export function findById(id) {
+  return repo().findById(id);
 }
 
 export function findNearDuplicate(category, terms, opts) {

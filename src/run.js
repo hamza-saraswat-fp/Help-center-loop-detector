@@ -27,7 +27,7 @@ import path from 'node:path';
 import { log, warn, error as logError } from './log.js';
 import { normalizeEvent } from './sources/adapter.js';
 import { holdUntil } from './prefilter/hold.js';
-import { destinationShortcut } from './prefilter/shortcut.js';
+import { destinationShortcut, loadShortcutRules } from './prefilter/shortcut.js';
 import { fingerprintOf } from './prefilter/fingerprint.js';
 import { computePriority } from './check/priority.js';
 import { runWithTrace, getTrace } from './trace.js';
@@ -63,6 +63,8 @@ const LOGGED_VERDICTS = new Set(['NOT_A_GAP', 'UNFINDABLE', 'HIDDEN']);
 const SUMMARY_WEEKDAY = 1;
 const SUMMARY_HOUR_UTC = 14;
 const SUMMARY_MIN_GAP_DAYS = 6;
+// A week of logged candidates, well above the ~15 the summary actually lists.
+const SUMMARY_MAX_ROWS = 500;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -83,7 +85,7 @@ function messageOf(err) {
  *   runCheck: (event: object, index: object) => Promise<object>,
  *   events: object, candidates: object, actions: object, runs: object,
  *   poster: {postCard: Function, replyInThread: Function},
- *   categoryMap: object, ownerMapping: object,
+ *   categoryMap: object, shortcutRules?: object[], ownerMapping: object,
  *   pollReactions?: Function, pollPrs?: Function,
  *   now?: () => Date, gitSha?: string|null,
  * }} deps
@@ -102,6 +104,10 @@ export function createRun({
   runs,
   poster,
   categoryMap,
+  // Read once when the orchestrator is built, not once per event: a config
+  // file that has gone missing or unparseable should fail the run at the top
+  // rather than throw from inside the per-event loop.
+  shortcutRules = loadShortcutRules(),
   ownerMapping,
   // Task 14's two lanes. They are seams here on purpose: the orchestrator
   // decides *when* polling happens (every run unless --skip-poll) so that
@@ -153,6 +159,20 @@ export function createRun({
     // dry_run's whole output is this list: nothing is written, so the results
     // have to come back to the caller in memory to be printed.
     if (dryRun) stats.results = [];
+
+    // Every card builder runs `assertNoForbiddenMentions` and throws on a
+    // model-written string that smuggled in a mention. That is a content bug
+    // in one card, so it is recorded and skipped rather than allowed to end
+    // the run. Returns null when the card could not be built.
+    function buildCard(build, what) {
+      try {
+        return build();
+      } catch (err) {
+        stats.errors.push({ lane: 'slack', message: `${what}: ${messageOf(err)}` });
+        logError(LANE, `could not build ${what}: ${messageOf(err)}`);
+        return null;
+      }
+    }
 
     // Which channel this mode posts to, resolved once: the source-failure
     // alert needs it before the posting loop does. A shadow run with no
@@ -260,176 +280,186 @@ export function createRun({
       // itself: the same question twice in one pull is still only one gap.
       const seenFingerprints = new Set();
 
-      for (const event of pending) {
-        await runWithTrace(async () => {
-          const label = `${event.source}/${event.source_event_id}`;
+      // One event, start to finish. Split out so the loop below can put a
+      // single guard around it.
+      async function processEvent(event, label) {
+        // Hold: pinged, unanswered, and less than 24h old. "Nobody
+        // answered" is not yet meaningful signal, so the event stays
+        // unprocessed and is picked up again next run.
+        const held = holdUntil(event, startedAt);
+        if (held) {
+          stats.held += 1;
+          if (!dryRun) await events.markHeld(event.id);
+          log(LANE, `held ${label} until ${held}`);
+          return;
+        }
 
-          // Hold: pinged, unanswered, and less than 24h old. "Nobody
-          // answered" is not yet meaningful signal, so the event stays
-          // unprocessed and is picked up again next run.
-          const held = holdUntil(event, startedAt);
-          if (held) {
-            stats.held += 1;
-            if (!dryRun) await events.markHeld(event.id);
-            log(LANE, `held ${label} until ${held}`);
-            return;
-          }
+        // Computed before the shortcut branch because `fingerprint` is the
+        // candidates table's unique key -- a shortcut candidate needs one
+        // too, even though it stores nothing else about the question.
+        const fingerprint = fingerprintOf(event, categoryMap);
 
-          // Computed before the shortcut branch because `fingerprint` is the
-          // candidates table's unique key -- a shortcut candidate needs one
-          // too, even though it stores nothing else about the question.
-          const fingerprint = fingerprintOf(event, categoryMap);
-
-          // Shortcut: a data lookup that was never going to be a docs gap.
-          // Recorded as a logged candidate (kind and category only, no
-          // question text -- see Global Constraints on PII) so the volume
-          // stays visible without costing a model call.
-          if (destinationShortcut(event) === 'none') {
-            if (dryRun) {
-              log(LANE, `dry-run shortcut: ${label} kind=${event.kind}`);
-              return;
-            }
-            // findByFingerprint first because `fingerprint` is unique: a
-            // second identical lookup reuses the candidate instead of failing
-            // the insert.
-            const existing = await candidates.findByFingerprint(fingerprint.hash);
-            const candidate =
-              existing ??
-              (await candidates.insertCandidate({
-                fingerprint: fingerprint.hash,
-                category: fingerprint.category,
-                destination: 'none',
-                question_paraphrase: `[${event.kind}] data lookup`,
-                status: 'logged',
-                first_seen: event.occurred_at,
-                last_seen: event.occurred_at,
-              }));
-            await events.markProcessed(event.id, 'shortcut_none', { candidateId: candidate?.id ?? null });
-            return;
-          }
-
-          // Dedup: exact fingerprint first, then a fuzzy same-category match
-          // for the same question asked in different words.
-          let existing = null;
+        // Shortcut: a data lookup that was never going to be a docs gap.
+        // Recorded as a logged candidate (kind and category only, no
+        // question text -- see Global Constraints on PII) so the volume
+        // stays visible without costing a model call.
+        if (destinationShortcut(event, shortcutRules) === 'none') {
           if (dryRun) {
-            if (seenFingerprints.has(fingerprint.hash)) existing = { id: null, status: 'logged' };
-            seenFingerprints.add(fingerprint.hash);
-          } else {
-            existing =
-              (await candidates.findByFingerprint(fingerprint.hash)) ??
-              (await candidates.findNearDuplicate(fingerprint.category, fingerprint.terms));
+            log(LANE, `dry-run shortcut: ${label} kind=${event.kind}`);
+            return;
+          }
+          // findByFingerprint first because `fingerprint` is unique: a
+          // second identical lookup reuses the candidate instead of failing
+          // the insert.
+          const existing = await candidates.findByFingerprint(fingerprint.hash);
+          const candidate =
+            existing ??
+            (await candidates.insertCandidate({
+              fingerprint: fingerprint.hash,
+              category: fingerprint.category,
+              destination: 'none',
+              question_paraphrase: `[${event.kind}] data lookup`,
+              status: 'logged',
+              first_seen: event.occurred_at,
+              last_seen: event.occurred_at,
+            }));
+          await events.markProcessed(event.id, 'shortcut_none', { candidateId: candidate?.id ?? null });
+          return;
+        }
+
+        // The "owner answered later" path. `upsertEvents` clears processed_at
+        // when an event's truth goes from none to anything else, so the event
+        // comes back around still pointing at the candidate it created. It
+        // must not be deduped against that candidate -- it *is* that
+        // candidate's event -- so it skips dedup, gets checked again with the
+        // answer attached, and updates the row in place.
+        const recheckCandidateId = !dryRun && event.candidate_id ? event.candidate_id : null;
+
+        // Dedup: exact fingerprint first, then a fuzzy same-category match
+        // for the same question asked in different words.
+        let existing = null;
+        if (recheckCandidateId) {
+          log(LANE, `re-checking ${label} against candidate #${recheckCandidateId}`);
+        } else if (dryRun) {
+          if (seenFingerprints.has(fingerprint.hash)) existing = { id: null, status: 'logged' };
+          seenFingerprints.add(fingerprint.hash);
+        } else {
+          existing =
+            (await candidates.findByFingerprint(fingerprint.hash)) ??
+            (await candidates.findNearDuplicate(fingerprint.category, fingerprint.terms));
+        }
+
+        if (existing) {
+          stats.duplicates += 1;
+          log(LANE, `duplicate ${label} -> candidate #${existing.id ?? 'in-memory'}`);
+          if (dryRun) return;
+
+          const merged = (await candidates.mergeEventIntoCandidate(existing, event)) ?? existing;
+          await candidates.linkEvent(existing.id, event.id);
+
+          // The priority of a gap depends on how often and from where it
+          // has been seen, so it is recomputed over the whole linked
+          // history every time one more event lands on it.
+          const linked = await candidates.linkedEvents(existing.id);
+          const priority = computePriority({
+            verdict: merged.verdict ?? existing.verdict,
+            events: linked,
+            now: startedAt,
+          });
+          if (priority !== (merged.priority ?? null)) {
+            await candidates.updateCandidate(existing.id, { priority });
           }
 
-          if (existing) {
-            stats.duplicates += 1;
-            log(LANE, `duplicate ${label} -> candidate #${existing.id ?? 'in-memory'}`);
-            if (dryRun) return;
-
-            const merged = (await candidates.mergeEventIntoCandidate(existing, event)) ?? existing;
-            await candidates.linkEvent(existing.id, event.id);
-
-            // The priority of a gap depends on how often and from where it
-            // has been seen, so it is recomputed over the whole linked
-            // history every time one more event lands on it.
-            const linked = await candidates.linkedEvents(existing.id);
-            const priority = computePriority({
-              verdict: merged.verdict ?? existing.verdict,
-              events: linked,
-              now: startedAt,
-            });
-            if (priority !== (merged.priority ?? null)) {
-              await candidates.updateCandidate(existing.id, { priority });
-            }
-
-            // `existing` may be a near-duplicate row, which carries no
-            // slack_ts; `merged` is the full row the update returned.
-            const slackTs = merged.slack_ts ?? existing.slack_ts ?? null;
-            if (existing.status === 'posted' && channel && slackTs) {
-              const ts = await poster.replyInThread(
-                channel,
-                slackTs,
-                buildDuplicateReply({ candidate: merged, linked, latest: event, now: startedAt }),
-              );
+          // `existing` may be a near-duplicate row, which carries no
+          // slack_ts; `merged` is the full row the update returned.
+          const slackTs = merged.slack_ts ?? existing.slack_ts ?? null;
+          if (existing.status === 'posted' && channel && slackTs) {
+            // Building a card can throw (the mention guard). A reply nobody
+            // gets is worth an error line, not a dead run -- the merge itself
+            // has already happened.
+            const reply = buildCard(
+              () => buildDuplicateReply({ candidate: merged, linked, latest: event, now: startedAt }),
+              `the thread reply for candidate #${existing.id}`,
+            );
+            if (reply) {
+              const ts = await poster.replyInThread(channel, slackTs, reply);
               if (ts) {
                 await actions.recordAction({ candidateId: existing.id, action: 'thread_reply', slackTs: ts });
               }
             }
-
-            await events.markProcessed(event.id, 'duplicate', { candidateId: existing.id });
-            return;
           }
 
-          // --- the check --------------------------------------------------
-          let result;
-          try {
-            result = await runCheck(event, index);
-          } catch (err) {
-            // Compared by name rather than `instanceof`: this module never
-            // imports src/check/runCheck.js (that would pull the env
-            // singleton in with it), and a name comparison is immune to two
-            // copies of the class anyway.
-            if (err?.name === 'CheckFailed') {
-              stats.checks_failed += 1;
-              logError(LANE, `check failed for ${label}: ${messageOf(err)}`);
-              if (!dryRun) {
-                const attempts = await events.bumpCheckAttempts(event.id);
-                if (attempts >= MAX_CHECK_ATTEMPTS) {
-                  log(LANE, `giving up on ${label} after ${attempts} check attempts`);
-                  await events.markProcessed(event.id, 'check_failed');
-                }
+          await events.markProcessed(event.id, 'duplicate', { candidateId: existing.id });
+          return;
+        }
+
+        // --- the check --------------------------------------------------
+        let result;
+        try {
+          result = await runCheck(event, index);
+        } catch (err) {
+          // Compared by name rather than `instanceof`: this module never
+          // imports src/check/runCheck.js (that would pull the env
+          // singleton in with it), and a name comparison is immune to two
+          // copies of the class anyway.
+          if (err?.name === 'CheckFailed') {
+            stats.checks_failed += 1;
+            logError(LANE, `check failed for ${label}: ${messageOf(err)}`);
+            if (!dryRun) {
+              const attempts = await events.bumpCheckAttempts(event.id);
+              if (attempts >= MAX_CHECK_ATTEMPTS) {
+                log(LANE, `giving up on ${label} after ${attempts} check attempts`);
+                await events.markProcessed(event.id, 'check_failed');
               }
-              return;
             }
-            // Anything else is a bug rather than a lane failure, but it still
-            // must not take the rest of the run down with it.
-            stats.errors.push({ lane: 'check', source: event.source, message: messageOf(err) });
-            logError(LANE, `unexpected check error for ${label}: ${messageOf(err)}`);
             return;
           }
+          // Anything else is a bug rather than a lane failure, but it still
+          // must not take the rest of the run down with it.
+          stats.errors.push({ lane: 'check', source: event.source, message: messageOf(err) });
+          logError(LANE, `unexpected check error for ${label}: ${messageOf(err)}`);
+          return;
+        }
 
-          // Only a help-center-bound gap earns a card; everything else is
-          // recorded for the weekly summary.
-          const status =
-            result.destination !== 'help_center' || LOGGED_VERDICTS.has(result.verdict) ? 'logged' : 'new';
+        // Only a help-center-bound gap earns a card; everything else is
+        // recorded for the weekly summary.
+        const status =
+          result.destination !== 'help_center' || LOGGED_VERDICTS.has(result.verdict) ? 'logged' : 'new';
 
-          // Onyx can promote an unverified answer to a corroborated one, but
-          // only on the ladder's top rung -- in `shadow` it is observed and
-          // recorded, never acted on. Imported here rather than at the top of
-          // the file because src/onyx.js builds its default client from the
-          // env singleton at import time.
-          let truthKind = event.truth_kind;
-          const onyxHits = result.evidence?.onyx?.hits;
-          if (env.onyxMode === 'live' && Array.isArray(onyxHits) && onyxHits.length > 0) {
-            const { upgradedTruthKind } = await import('./onyx.js');
-            truthKind = upgradedTruthKind(truthKind, onyxHits);
-          }
+        // Onyx can promote an unverified answer to a corroborated one, but
+        // only on the ladder's top rung -- in `shadow` it is observed and
+        // recorded, never acted on. Imported here rather than at the top of
+        // the file because src/onyx.js builds its default client from the
+        // env singleton at import time.
+        let truthKind = event.truth_kind;
+        const onyxHits = result.evidence?.onyx?.hits;
+        if (env.onyxMode === 'live' && Array.isArray(onyxHits) && onyxHits.length > 0) {
+          const { upgradedTruthKind } = await import('./onyx.js');
+          truthKind = upgradedTruthKind(truthKind, onyxHits);
+        }
 
-          const priority = computePriority({ verdict: result.verdict, events: [event], now: startedAt });
-          const trace = getTrace();
-          stats.cost_usd += trace?.llm?.totals?.cost_usd ?? 0;
+        const priority = computePriority({ verdict: result.verdict, events: [event], now: startedAt });
+        const trace = getTrace();
+        stats.cost_usd += trace?.llm?.totals?.cost_usd ?? 0;
 
-          if (dryRun) {
-            stats.results.push(result);
-            log(
-              LANE,
-              `dry-run result: ${label} verdict=${result.verdict} destination=${result.destination} ` +
-                `priority=${priority} target=${result.target_article_path} confidence=${result.confidence} ` +
-                `"${result.question_paraphrase}"`,
-            );
-            return;
-          }
+        if (dryRun) {
+          stats.results.push(result);
+          log(
+            LANE,
+            `dry-run result: ${label} verdict=${result.verdict} destination=${result.destination} ` +
+              `priority=${priority} target=${result.target_article_path} confidence=${result.confidence} ` +
+              `"${result.question_paraphrase}"`,
+          );
+          return;
+        }
 
-          const candidate = await candidates.insertCandidate({
-            fingerprint: fingerprint.hash,
-            fingerprint_terms: fingerprint.terms,
-            category: fingerprint.category,
+        if (recheckCandidateId) {
+          const current = await candidates.findById(recheckCandidateId);
+          const patch = {
             destination: result.destination,
             verdict: result.verdict,
             priority,
             truth_kind: truthKind,
-            // An event with no corroborated answer is a question for a human,
-            // not a documentation edit -- that is what turns the card into a
-            // "needs answer" ping below.
             needs_answer: truthKind === 'none',
             question_paraphrase: result.question_paraphrase,
             truth_summary: result.truth_summary,
@@ -440,58 +470,124 @@ export function createRun({
             proposed_change: result.proposed_change,
             paste_request: result.paste_request,
             confidence: result.confidence,
-            // `docs_sha` is not a gap_candidates column: the sha the verdict
-            // was reached against travels inside `evidence`, where runCheck
-            // already puts it.
             evidence: { ...result.evidence, trace },
-            status,
-            first_seen: event.occurred_at,
             last_seen: event.occurred_at,
-          });
+          };
+          // Promote a candidate that was only logged and now earns a card;
+          // never walk a posted or actioned one backwards, and never touch
+          // `event_count` -- this is the same event, not another sighting.
+          // `fingerprint` is left alone too: the answer changes the terms, and
+          // rewriting a unique key mid-life can only collide.
+          if (current?.status === 'logged' && status === 'new') patch.status = 'new';
 
-          if (!candidate) {
-            logError(LANE, `could not record a candidate for ${label}; leaving the event unprocessed`);
+          const updated = await candidates.updateCandidate(recheckCandidateId, patch);
+          if (!updated) {
+            logError(LANE, `could not update candidate #${recheckCandidateId}; leaving ${label} unprocessed`);
             return;
           }
+          await events.markProcessed(event.id, 'candidate', { candidateId: recheckCandidateId });
+          log(LANE, `candidate #${recheckCandidateId} re-checked ${result.verdict} ${patch.status ?? current?.status} from ${label}`);
+          return;
+        }
 
-          stats.candidates_new += 1;
-          await candidates.linkEvent(candidate.id, event.id);
-          await events.markProcessed(event.id, 'candidate', { candidateId: candidate.id });
-          log(LANE, `candidate #${candidate.id} ${result.verdict} ${status} from ${label}`);
+        const candidate = await candidates.insertCandidate({
+          fingerprint: fingerprint.hash,
+          fingerprint_terms: fingerprint.terms,
+          category: fingerprint.category,
+          destination: result.destination,
+          verdict: result.verdict,
+          priority,
+          truth_kind: truthKind,
+          // An event with no corroborated answer is a question for a human,
+          // not a documentation edit -- that is what turns the card into a
+          // "needs answer" ping below.
+          needs_answer: truthKind === 'none',
+          question_paraphrase: result.question_paraphrase,
+          truth_summary: result.truth_summary,
+          target_article_path: result.target_article_path,
+          target_article_url: result.target_article_url,
+          says_now: result.says_now,
+          should_say: result.should_say,
+          proposed_change: result.proposed_change,
+          paste_request: result.paste_request,
+          confidence: result.confidence,
+          // `docs_sha` is not a gap_candidates column: the sha the verdict
+          // was reached against travels inside `evidence`, where runCheck
+          // already puts it.
+          evidence: { ...result.evidence, trace },
+          status,
+          first_seen: event.occurred_at,
+          last_seen: event.occurred_at,
+        });
+
+        if (!candidate) {
+          logError(LANE, `could not record a candidate for ${label}; leaving the event unprocessed`);
+          return;
+        }
+
+        stats.candidates_new += 1;
+        await candidates.linkEvent(candidate.id, event.id);
+        await events.markProcessed(event.id, 'candidate', { candidateId: candidate.id });
+        log(LANE, `candidate #${candidate.id} ${result.verdict} ${status} from ${label}`);
+        log(LANE, `candidate #${candidate.id} ${result.verdict} ${status} from ${label}`);
+      }
+
+      for (const event of pending) {
+        await runWithTrace(async () => {
+          const label = `${event.source}/${event.source_event_id}`;
+          try {
+            await processEvent(event, label);
+          } catch (err) {
+            // One event's bad row, corrupt jsonb or transient repo failure is
+            // not worth the other 39. It stays unprocessed and comes back
+            // next run.
+            stats.errors.push({
+              lane: 'event',
+              source: event.source,
+              source_event_id: event.source_event_id,
+              message: messageOf(err),
+            });
+            logError(LANE, `event ${label} failed: ${messageOf(err)}`);
+          }
         });
       }
+
 
       // --- post -----------------------------------------------------------
       if (!dryRun && channel) {
         for (const candidate of await candidates.listByStatus(['new'])) {
+          // A needs-answer card records `owner_pinged`, not `posted`, so the
+          // guard has to ask about the action this candidate would actually
+          // write -- otherwise a crash between recordAction and
+          // updateCandidate pings the owners a second time.
+          const action = candidate.needs_answer ? 'owner_pinged' : 'posted';
+
           // The audit trail is the idempotency guard: an action row means the
           // card went out and a previous run died before it could say so.
-          if (await actions.hasAction(candidate.id, 'posted')) {
-            log(LANE, `candidate #${candidate.id} was already posted; repairing its status`);
+          if (await actions.hasAction(candidate.id, action)) {
+            log(LANE, `candidate #${candidate.id} already has a ${action} action; repairing its status`);
             await candidates.updateCandidate(candidate.id, { status: 'posted' });
             continue;
           }
 
           const linked = await candidates.linkedEvents(candidate.id);
 
-          let card;
-          try {
-            card = candidate.needs_answer
-              ? buildNeedsAnswerCard({
-                  candidate,
-                  linked,
-                  owners: ownersFor(candidate.category, ownerMapping),
-                  mentionOwners: env.hcLoopOwnerMentions,
-                  now: startedAt,
-                })
-              : buildCandidateCard({ candidate, linked, now: startedAt });
-          } catch (err) {
-            // A card that fails the mention rules is a bug in the model's
-            // output, not a reason to stop posting the rest.
-            stats.errors.push({ lane: 'slack', message: `candidate #${candidate.id}: ${messageOf(err)}` });
-            logError(LANE, `could not build a card for candidate #${candidate.id}: ${messageOf(err)}`);
-            continue;
-          }
+          const card = buildCard(
+            () =>
+              candidate.needs_answer
+                ? buildNeedsAnswerCard({
+                    candidate,
+                    linked,
+                    owners: ownersFor(candidate.category, ownerMapping),
+                    mentionOwners: env.hcLoopOwnerMentions,
+                    now: startedAt,
+                  })
+                : buildCandidateCard({ candidate, linked, now: startedAt }),
+            `the card for candidate #${candidate.id}`,
+          );
+          // A card that fails the mention rules is a bug in the model's
+          // output, not a reason to stop posting the rest.
+          if (!card) continue;
 
           const ts = await poster.postCard(channel, card);
           if (!ts) {
@@ -500,11 +596,7 @@ export function createRun({
             continue;
           }
 
-          await actions.recordAction({
-            candidateId: candidate.id,
-            action: candidate.needs_answer ? 'owner_pinged' : 'posted',
-            slackTs: ts,
-          });
+          await actions.recordAction({ candidateId: candidate.id, action, slackTs: ts });
           await candidates.updateCandidate(candidate.id, {
             status: 'posted',
             slack_channel: channel,
@@ -521,9 +613,10 @@ export function createRun({
           // The first summary ever covers the last week; after that, exactly
           // the span since the previous one, so nothing falls between two.
           const since = lastSummaryAt ?? new Date(startedAt.getTime() - 7 * DAY_MS).toISOString();
-          const logged = (await candidates.listByStatus(['logged'])).filter(
-            (c) => new Date(c.created_at) >= new Date(since),
-          );
+          // `since` goes into the query, not a filter over the result: the
+          // limit is applied by Postgres first, so filtering afterwards means
+          // an empty summary forever once the logged backlog passes one page.
+          const logged = await candidates.listByStatus(['logged'], { since, limit: SUMMARY_MAX_ROWS });
 
           // Three buckets, each a thing that gets no card of its own:
           // findable-but-not-found, present-but-hidden, and not ours at all.
@@ -533,10 +626,16 @@ export function createRun({
             internal: logged.filter((c) => c.destination === 'internal'),
           };
 
-          const ts = await poster.postCard(channel, buildWeeklySummary({ since, ...summary, now: startedAt }));
-          if (ts) {
-            stats.summary_posted = true;
-            log(LANE, `weekly summary posted since=${since}`);
+          const card = buildCard(
+            () => buildWeeklySummary({ since, ...summary, now: startedAt }),
+            'the weekly summary',
+          );
+          if (card) {
+            const ts = await poster.postCard(channel, card);
+            if (ts) {
+              stats.summary_posted = true;
+              log(LANE, `weekly summary posted since=${since}`);
+            }
           }
         }
       }

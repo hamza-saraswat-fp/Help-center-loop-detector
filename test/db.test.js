@@ -574,3 +574,86 @@ test('bumpCheckAttempts: returns 0 instead of throwing when the read fails', asy
   assert.equal(await events.bumpCheckAttempts(7), 0);
   assert.equal(calls.filter((c) => c.op === 'update').length, 0, 'a failed read must not write');
 });
+
+// ---------------------------------------------------------------------------
+// Task 13 review fixes
+// ---------------------------------------------------------------------------
+
+test('upsertEvents: preserves the loop\'s own underscore-prefixed detail keys', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': {
+      data: [
+        {
+          source_event_id: 'evt-1',
+          truth_kind: 'none',
+          processed_at: null,
+          detail: { _check_attempts: 2, escalation_type: 'stale' },
+        },
+      ],
+      error: null,
+    },
+    'gap_events.upsert': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  await events.upsertEvents([baseEvent({ source_event_id: 'evt-1', detail: { escalation_type: 'no_answer' } })]);
+
+  const selectCall = calls.find((c) => c.op === 'select');
+  assert.match(selectCall.select, /detail/, 'the existing detail has to be read to be preserved');
+
+  const upsertCall = calls.find((c) => c.op === 'upsert');
+  assert.deepEqual(upsertCall.payload[0].detail, {
+    escalation_type: 'no_answer',
+    _check_attempts: 2,
+  });
+});
+
+test('upsertEvents: a brand new row keeps its detail exactly as the view sent it', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': { data: [], error: null },
+    'gap_events.upsert': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  await events.upsertEvents([baseEvent({ detail: { escalation_type: 'no_answer' } })]);
+
+  const upsertCall = calls.find((c) => c.op === 'upsert');
+  assert.deepEqual(upsertCall.payload[0].detail, { escalation_type: 'no_answer' });
+});
+
+test('listByStatus: pushes the since window into the query instead of filtering after', async () => {
+  const { client, calls } = fakeSupabase({ 'gap_candidates.select': { data: [], error: null } });
+  const repo = createCandidatesRepo({ client, now });
+
+  await repo.listByStatus(['logged'], { since: '2026-09-14T00:00:00.000Z', limit: 500 });
+
+  const call = calls[0];
+  assert.deepEqual(call.filters, [
+    { method: 'in', args: ['status', ['logged']] },
+    { method: 'gte', args: ['created_at', '2026-09-14T00:00:00.000Z'] },
+  ]);
+  assert.equal(call.limit, 500);
+});
+
+test('listByStatus: omits the since filter when no window is given', async () => {
+  const { client, calls } = fakeSupabase({ 'gap_candidates.select': { data: [], error: null } });
+  const repo = createCandidatesRepo({ client, now });
+
+  await repo.listByStatus(['new']);
+
+  assert.deepEqual(calls[0].filters, [{ method: 'in', args: ['status', ['new']] }]);
+});
+
+test('findById: returns the candidate row, or null when it is missing', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_candidates.select': (call) =>
+      call.filters.some((f) => f.args[1] === 7)
+        ? { data: { id: 7, status: 'logged' }, error: null }
+        : { data: null, error: null },
+  });
+  const repo = createCandidatesRepo({ client, now });
+
+  assert.deepEqual(await repo.findById(7), { id: 7, status: 'logged' });
+  assert.equal(await repo.findById(8), null);
+  assert.equal(calls[0].single, 'maybeSingle');
+});

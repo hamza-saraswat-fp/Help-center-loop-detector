@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { buildDocsIndex } from '../src/docs/index.js';
 import { loadCategoryMap, fingerprintOf } from '../src/prefilter/fingerprint.js';
+import { loadShortcutRules } from '../src/prefilter/shortcut.js';
 import { normalizeEvent } from '../src/sources/adapter.js';
 import { addLlmCall } from '../src/trace.js';
 import { fakeRepos } from './fakes.js';
@@ -23,6 +24,7 @@ const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 const DOCS_DIR = path.join(FIXTURES_DIR, 'docs');
 
 const CATEGORY_MAP = loadCategoryMap();
+const SHORTCUT_RULES = loadShortcutRules();
 const OWNER_MAPPING = JSON.parse(readFileSync(path.join(__dirname, '..', 'config', 'owner_mapping.json'), 'utf8'));
 
 const JUJU_ROWS = JSON.parse(readFileSync(path.join(FIXTURES_DIR, 'events', 'juju.json'), 'utf8'));
@@ -174,6 +176,7 @@ function harness({ env: envOverrides = {}, rows = {}, script = {}, seed = {}, po
     runs: repos.runs,
     poster,
     categoryMap: CATEGORY_MAP,
+    shortcutRules: SHORTCUT_RULES,
     ownerMapping: OWNER_MAPPING,
     now,
     gitSha: 'gitsha1',
@@ -848,4 +851,354 @@ test('the run row is always closed with the stats, and the pools always closed',
   assert.equal(stats.results, undefined, 'results only exist in dry_run');
   assert.equal(mintlify.closed, 1);
   assert.equal(sourceReader.closed, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Review round 1
+// ---------------------------------------------------------------------------
+
+test('an always-failing event is given up on after three runs, across re-pulls', async () => {
+  // The re-pull is the point: the event comes back from the view on every run,
+  // so the attempt counter has to survive being upserted over.
+  const { run, repos } = harness({
+    rows: { juju: [JUJU_ROWS[1]] },
+    script: { default: new CheckFailed('model', new Error('openrouter 500')) },
+  });
+
+  await run(args());
+  assert.equal(repos.state.events[0].detail._check_attempts, 1);
+  await run(args());
+  assert.equal(repos.state.events[0].detail._check_attempts, 2);
+  assert.equal(repos.state.events[0].processed_at, null);
+
+  await run(args());
+  assert.equal(repos.state.events[0].detail._check_attempts, 3);
+  assert.equal(repos.state.events[0].outcome, 'check_failed');
+  assert.ok(repos.state.events[0].processed_at);
+});
+
+test('the weekly summary sees this week past a backlog of older logged candidates', async () => {
+  const base = {
+    fingerprint_terms: [],
+    needs_answer: false,
+    event_count: 1,
+    status: 'logged',
+    destination: 'help_center',
+    verdict: 'UNFINDABLE',
+    category: 'general',
+    target_article_path: 'old.mdx',
+    first_seen: '2026-06-01T00:00:00.000Z',
+    last_seen: '2026-06-01T00:00:00.000Z',
+  };
+  const older = Array.from({ length: 150 }, (_, i) => ({
+    ...base,
+    id: i + 1,
+    fingerprint: `old-${i}`,
+    question_paraphrase: `Old ${i}`,
+    created_at: '2026-06-01T00:00:00.000Z',
+  }));
+  const recent = [
+    { ...base, id: 200, fingerprint: 'new-1', question_paraphrase: 'Recent unfindable', created_at: '2026-09-18T00:00:00.000Z' },
+    { ...base, id: 201, fingerprint: 'new-2', verdict: 'HIDDEN', question_paraphrase: 'Recent hidden', target_article_path: 'b.mdx', created_at: '2026-09-19T00:00:00.000Z' },
+  ];
+
+  const { run, poster } = harness({ now: () => MONDAY, seed: { candidates: [...older, ...recent] } });
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.summary_posted, true);
+  assert.match(poster.posts[0].card.text, /Exists but hard to find \(1\)/);
+  assert.match(poster.posts[0].card.text, /Recent unfindable/);
+  assert.match(poster.posts[0].card.text, /Exists but hidden \(1\)/);
+  assert.equal(poster.posts[0].card.text.includes('Old 0'), false);
+});
+
+test('a needs-answer candidate with an owner_pinged action is repaired, not re-pinged', async () => {
+  const { run, repos, poster } = harness({
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-1',
+          category: 'using-fieldpulse',
+          destination: 'help_center',
+          verdict: 'MISSING',
+          priority: 'P2',
+          status: 'new',
+          question_paraphrase: 'Already pinged',
+          needs_answer: true,
+          event_count: 1,
+          first_seen: '2026-09-15T00:00:00.000Z',
+          last_seen: '2026-09-15T00:00:00.000Z',
+          created_at: '2026-09-15T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+  repos.state.actions.push({ id: 1, candidateId: 1, action: 'owner_pinged', slackTs: 'ts-old' });
+
+  const { stats } = await run(args());
+
+  assert.equal(poster.posts.length, 0, 'the owners were already pinged once');
+  assert.equal(stats.cards_posted, 0);
+  assert.equal(repos.state.candidates[0].status, 'posted');
+  assert.equal(repos.state.actions.length, 1);
+});
+
+test('a weekly summary that cannot be built is recorded, not thrown', async () => {
+  const { run, poster } = harness({
+    now: () => MONDAY,
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-1',
+          fingerprint_terms: [],
+          category: 'general',
+          destination: 'help_center',
+          verdict: 'UNFINDABLE',
+          status: 'logged',
+          // A model-written paraphrase that smuggled in a Slack mention.
+          question_paraphrase: 'Ask <@U123> about exports',
+          target_article_path: 'a.mdx',
+          needs_answer: false,
+          event_count: 1,
+          first_seen: '2026-09-18T00:00:00.000Z',
+          last_seen: '2026-09-18T00:00:00.000Z',
+          created_at: '2026-09-18T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+
+  const { exitCode, stats } = await run(args());
+
+  assert.equal(exitCode, 0);
+  assert.equal(poster.posts.length, 0);
+  assert.notEqual(stats.summary_posted, true);
+  assert.equal(stats.errors.length, 1);
+  assert.equal(stats.errors[0].lane, 'slack');
+});
+
+test('a duplicate whose thread reply cannot be built still finishes the run', async () => {
+  const row = JUJU_ROWS[1];
+  const fp = fingerprintFor(row, 'juju');
+  const { run, repos, poster } = harness({
+    rows: { juju: [row] },
+    seed: {
+      // A corrupt linked event: its source flows into the reply's text, where
+      // the mention guard rejects it.
+      events: [
+        {
+          id: 1,
+          source: '<@U123>',
+          source_event_id: '4999',
+          occurred_at: '2026-09-01T00:00:00.000Z',
+          truth_kind: 'none',
+          processed_at: '2026-09-01T01:00:00.000Z',
+          outcome: 'candidate',
+          candidate_id: 1,
+        },
+      ],
+      candidates: [
+        {
+          id: 1,
+          fingerprint: fp.hash,
+          fingerprint_terms: fp.terms,
+          category: fp.category,
+          destination: 'help_center',
+          verdict: 'MISSING',
+          priority: 'P2',
+          status: 'posted',
+          slack_ts: 'ts-old',
+          question_paraphrase: 'Can jobs be bulk-reassigned?',
+          needs_answer: true,
+          event_count: 1,
+          first_seen: '2026-09-01T00:00:00.000Z',
+          last_seen: '2026-09-01T00:00:00.000Z',
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+
+  const { exitCode, stats } = await run(args());
+
+  assert.equal(exitCode, 0);
+  assert.equal(poster.replies.length, 0);
+  assert.equal(stats.errors.length, 1);
+  assert.equal(stats.errors[0].lane, 'slack');
+  assert.equal(stats.duplicates, 1);
+  const merged = repos.state.events.find((e) => e.source_event_id === '5002');
+  assert.equal(merged.outcome, 'duplicate', 'the merge itself still completed');
+});
+
+test('an event whose truth arrived later is re-checked against its own candidate', async () => {
+  const answered = {
+    ...JUJU_ROWS[0],
+    truth_answer: 'Convert copies the estimate total; edits after the convert are not synced.',
+    truth_kind: 'human',
+    needs_answer: false,
+    pinged_at: null,
+  };
+  const { run, repos, runCheck } = harness({
+    rows: { juju: [answered] },
+    script: { default: checkResult({ verdict: 'MISSING', question_paraphrase: 'Why does the converted total differ?' }) },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'juju',
+          source_event_id: '5001',
+          occurred_at: JUJU_ROWS[0].occurred_at,
+          question: JUJU_ROWS[0].question,
+          truth_kind: 'none',
+          detail: {},
+          // Reset by the upsert when the owner's answer landed: unprocessed
+          // again, but still pointing at the candidate it created.
+          processed_at: null,
+          outcome: null,
+          candidate_id: 1,
+        },
+      ],
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-original',
+          fingerprint_terms: ['invoice'],
+          category: 'using-fieldpulse',
+          destination: 'help_center',
+          verdict: 'UNFINDABLE',
+          priority: null,
+          status: 'logged',
+          truth_kind: 'none',
+          needs_answer: true,
+          question_paraphrase: 'Why does the invoice total differ?',
+          event_count: 1,
+          first_seen: '2026-09-10T14:22:00.000Z',
+          last_seen: '2026-09-10T14:22:00.000Z',
+          created_at: '2026-09-10T14:22:00.000Z',
+        },
+      ],
+    },
+  });
+
+  const { stats } = await run(args());
+
+  assert.deepEqual(runCheck.seen, ['5001'], 'the answered event is checked again, not deduped');
+  assert.equal(stats.duplicates, 0);
+  assert.equal(stats.candidates_new, 0, 'a re-check updates a candidate rather than creating one');
+  assert.equal(repos.state.candidates.length, 1);
+
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.event_count, 1, 'one event must not count twice');
+  assert.equal(candidate.verdict, 'MISSING');
+  assert.equal(candidate.truth_kind, 'human');
+  assert.equal(candidate.needs_answer, false);
+  assert.equal(candidate.question_paraphrase, 'Why does the converted total differ?');
+  // Promoted out of 'logged' by the re-check, then posted by the same run.
+  assert.equal(candidate.status, 'posted', 'a logged candidate that now qualifies gets promoted and posted');
+  assert.equal(stats.cards_posted, 1);
+  assert.equal(candidate.fingerprint, 'fp-original', 'the unique key is left alone');
+  assert.ok(candidate.evidence.trace);
+
+  assert.equal(repos.state.events[0].outcome, 'candidate');
+  assert.equal(repos.state.events[0].candidate_id, 1);
+});
+
+test('a re-check of a posted candidate leaves its status alone', async () => {
+  const { run, repos, poster } = harness({
+    rows: { juju: [{ ...JUJU_ROWS[0], truth_kind: 'human', truth_answer: 'Yes.', pinged_at: null }] },
+    script: { default: checkResult({ verdict: 'INCORRECT' }) },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'juju',
+          source_event_id: '5001',
+          occurred_at: JUJU_ROWS[0].occurred_at,
+          truth_kind: 'none',
+          detail: {},
+          processed_at: null,
+          outcome: null,
+          candidate_id: 1,
+        },
+      ],
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-original',
+          category: 'using-fieldpulse',
+          destination: 'help_center',
+          verdict: 'MISSING',
+          status: 'posted',
+          slack_ts: 'ts-old',
+          truth_kind: 'none',
+          needs_answer: true,
+          question_paraphrase: 'Original',
+          event_count: 1,
+          first_seen: '2026-09-10T14:22:00.000Z',
+          last_seen: '2026-09-10T14:22:00.000Z',
+          created_at: '2026-09-10T14:22:00.000Z',
+        },
+      ],
+    },
+  });
+
+  await run(args());
+
+  assert.equal(repos.state.candidates[0].status, 'posted', 'a posted card is not re-queued');
+  assert.equal(repos.state.candidates[0].verdict, 'INCORRECT');
+  assert.equal(poster.posts.length, 0);
+});
+
+test('one event that blows up is recorded and skipped; the rest of the run continues', async () => {
+  const h = harness({
+    rows: { juju: [JUJU_ROWS[1], JUJU_ROWS[2]] },
+    script: { default: checkResult({ verdict: 'NOT_A_GAP' }) },
+  });
+  const realFind = h.repos.candidates.findByFingerprint;
+  let exploded = false;
+  h.repos.candidates.findByFingerprint = async (hash) => {
+    if (!exploded) {
+      exploded = true;
+      throw new Error('supabase exploded');
+    }
+    return realFind(hash);
+  };
+
+  const { exitCode, stats } = await h.run(args());
+
+  assert.equal(exitCode, 0);
+  assert.equal(stats.errors.length, 1);
+  assert.equal(stats.errors[0].lane, 'event');
+  assert.equal(stats.errors[0].source, 'juju');
+  assert.equal(stats.errors[0].source_event_id, '5002');
+  assert.deepEqual(h.runCheck.seen, ['5003'], 'the next event is still processed');
+  assert.equal(h.repos.state.candidates.length, 1);
+  assert.equal(
+    h.repos.state.events.find((e) => e.source_event_id === '5002').processed_at,
+    null,
+    'the failed event is left for the next run',
+  );
+});
+
+test('the shortcut rules are read once per run, not once per event', async () => {
+  let reads = 0;
+  const rules = new Proxy([{ source: 'sidecar', kind: 'not_docs' }], {
+    get(target, prop, receiver) {
+      if (prop === Symbol.iterator) reads += 1;
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  const { run, runCheck } = harness({
+    rows: { sidecar: [{ ...SIDECAR_ROWS[0], event_id: 8899, kind: 'not_docs' }, SIDECAR_ROWS[2]] },
+    script: { default: checkResult({ verdict: 'NOT_A_GAP' }) },
+    shortcutRules: rules,
+  });
+
+  await run(args());
+
+  assert.equal(reads, 2, 'the injected rules are what every event is matched against');
+  assert.deepEqual(runCheck.seen, ['8803'], 'the shortcut still fires from the injected rules');
 });

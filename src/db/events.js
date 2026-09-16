@@ -32,6 +32,12 @@ const NORMALIZED_FIELDS = [
   'detail',
 ];
 
+// The loop's own keys inside `detail`: everything the view did not write.
+function loopKeys(detail) {
+  if (!detail || typeof detail !== 'object') return {};
+  return Object.fromEntries(Object.entries(detail).filter(([key]) => key.startsWith('_')));
+}
+
 export function createEventsRepo({ client, now = () => new Date() }) {
   async function sourceWatermark(source) {
     try {
@@ -61,7 +67,7 @@ export function createEventsRepo({ client, now = () => new Date() }) {
     try {
       const { data: existingRows, error: selectError } = await client
         .from('gap_events')
-        .select('source_event_id, truth_kind, processed_at')
+        .select('source_event_id, truth_kind, processed_at, detail')
         .eq('source', source)
         .in('source_event_id', ids);
 
@@ -79,6 +85,15 @@ export function createEventsRepo({ client, now = () => new Date() }) {
           counts.inserted += 1;
           return row;
         }
+
+        // `detail` is the view's column, but the loop keeps its own
+        // bookkeeping in there under underscore-prefixed keys
+        // (`_check_attempts`). A plain upsert rewrites the whole jsonb, so the
+        // 14-day re-pull would silently reset that counter every run and the
+        // three-strike budget would never fire. The view never sends an
+        // underscore key, so carrying the existing ones forward can't lose
+        // upstream data.
+        row.detail = { ...(row.detail ?? {}), ...loopKeys(existing.detail) };
 
         const truthNowAnswered = existing.truth_kind === 'none' && event.truth_kind !== 'none';
         if (truthNowAnswered) {

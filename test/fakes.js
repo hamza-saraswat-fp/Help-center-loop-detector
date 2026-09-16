@@ -188,7 +188,13 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
         );
         if (existing) {
           const reset = existing.truth_kind === 'none' && event.truth_kind !== 'none';
+          // Same rule as the real repo: the loop's underscore-prefixed keys
+          // inside `detail` survive a re-pull.
+          const loopKeys = Object.fromEntries(
+            Object.entries(existing.detail ?? {}).filter(([key]) => key.startsWith('_')),
+          );
           Object.assign(existing, event);
+          existing.detail = { ...(event.detail ?? {}), ...loopKeys };
           if (reset) {
             existing.processed_at = null;
             existing.outcome = null;
@@ -235,6 +241,10 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
   const candidates = {
     async findByFingerprint(hash) {
       return state.candidates.find((c) => c.fingerprint === hash) ?? null;
+    },
+    async findById(id) {
+      const row = byId(state.candidates, id);
+      return row ? { ...row } : null;
     },
     async findNearDuplicate(category, terms, { threshold = 0.6 } = {}) {
       if (!terms || terms.length === 0) return null;
@@ -285,10 +295,11 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       Object.assign(row, patch, { updated_at: now().toISOString() });
       return { ...row };
     },
-    async listByStatus(statuses, { limit = 100 } = {}) {
+    async listByStatus(statuses, { limit = 100, since = null } = {}) {
       return state.candidates
         .filter((c) => statuses.includes(c.status))
-        .sort((a, b) => a.id - b.id)
+        .filter((c) => !since || new Date(c.created_at) >= new Date(since))
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || a.id - b.id)
         .slice(0, limit)
         .map((c) => ({ ...c }));
     },
