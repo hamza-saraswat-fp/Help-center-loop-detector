@@ -161,9 +161,32 @@ export function fakeSupabase(script = {}) {
  *
  * `seed` pre-populates `events` / `candidates` / `runs`; rows there need
  * whatever columns the test asserts on, plus an `id`.
+ *
+ * The real repos never throw: on a failed write they log and return null (a
+ * unique violation, a NOT NULL violation, a dropped connection). The guards
+ * that handle that -- run.js's "could not record a candidate", reactions.js's
+ * and prs.js's `if (!row) continue` -- are only reachable if the fakes can
+ * fail too, so `failNext(method, times = 1)` scripts the next `times` calls of
+ * `method` to return null without writing anything. `insertCandidate` and
+ * `recordAction` are the two wired up; `failures` is left open for more.
  * @param {{now?: () => Date, seed?: {events?: object[], candidates?: object[], runs?: object[]}}} [opts]
  */
 export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
+  const failures = new Map();
+
+  /** Script the next `times` calls of `method` to return null. */
+  function failNext(method, times = 1) {
+    failures.set(method, (failures.get(method) ?? 0) + times);
+  }
+
+  /** True once per scripted failure, consuming it. */
+  function scriptedToFail(method) {
+    const remaining = failures.get(method) ?? 0;
+    if (remaining <= 0) return false;
+    failures.set(method, remaining - 1);
+    return true;
+  }
+
   const state = {
     events: [...(seed.events ?? [])],
     candidates: [...(seed.candidates ?? [])],
@@ -260,6 +283,7 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       return best;
     },
     async insertCandidate(row) {
+      if (scriptedToFail('insertCandidate')) return null;
       const iso = now().toISOString();
       const candidate = {
         id: nextId(state.candidates),
@@ -312,6 +336,9 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
 
   const actions = {
     async recordAction(action) {
+      // The real repo returns null on a unique violation (the partial unique
+      // indexes in migrations/0001_loop_schema.sql) without inserting.
+      if (scriptedToFail('recordAction')) return null;
       const row = { id: nextId(state.actions), ...action };
       state.actions.push(row);
       return { ...row };
@@ -348,5 +375,5 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
     },
   };
 
-  return { state, events, candidates, actions, runs };
+  return { state, events, candidates, actions, runs, failNext };
 }

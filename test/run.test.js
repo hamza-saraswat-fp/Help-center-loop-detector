@@ -1313,3 +1313,19 @@ test('the source-failure Slack alert redacts a connection string password', asyn
   assert.ok(alert.card.text.includes('loop:***@db.example.com'));
   assert.ok(!JSON.stringify(stats.errors).includes('hunter2'));
 });
+
+// --- final review: I11, the post-lane recordAction guard --------------------
+
+test('a candidate whose posted action was already recorded is not left at new', async () => {
+  const { run, repos, poster } = harness({ rows: { juju: [JUJU_ROWS[1]] } });
+  repos.failNext('recordAction');
+
+  const { stats } = await run(args());
+
+  assert.equal(poster.posts.length, 1, 'the card still went out');
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.status, 'posted');
+  assert.equal(candidate.slack_ts, 'ts-1', 'the Slack coordinates were still written');
+  assert.equal(candidate.slack_channel, 'C-GAPS');
+  assert.equal(stats.cards_posted, 1);
+});
