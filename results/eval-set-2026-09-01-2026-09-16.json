@@ -1,0 +1,545 @@
+{
+  "generated_at": "2026-09-16T17:43:51.281Z",
+  "window": {
+    "from": "2026-09-01",
+    "to": "2026-09-16",
+    "widened_from": "2026-09-01"
+  },
+  "counts": {
+    "control": {
+      "requested": 15,
+      "confirmed": 14,
+      "unconfirmed": 1,
+      "total": 15
+    },
+    "gap": {
+      "requested": 15,
+      "escalation": 5,
+      "model_detected": 10,
+      "cant_find": 0,
+      "total": 15
+    },
+    "total": 30
+  },
+  "cases": [
+    {
+      "case_id": "ctl-001",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.8,
+      "question": "When you generate a job report with site visits are the site visit field notes supposed to appear on the job report too?",
+      "july_answer_text": "No — *site visit field notes are not expected to automatically appear on a generated job/work order report.* Prior internal answers on this exact question say job reports pull from the *job* record, while *site visit notes are stored on the separate site visit record* and don’t flow into the job report by default. [MEM-4]\n\nThat lines up with internal docs showing *site visits are a subcomponent of a job*, not the same record. [INT-1] The public docs also only confirm job reports can show job-level notes/details/photos, and separately say site visit notes are used in site visit reporting or can be inserted into estimates/invoices — not job reports. [HC-1]\n\nIf someone needs those notes in a PDF, the current workaround has been to use a *site visit-specific output/workflow* rather than the job report. [MEM-1]",
+      "answer_text": "No — *site visit field notes are not expected to automatically appear on a generated job/work order report.* Prior internal answers on this exact question say job reports pull from the *job* record, while *site visit notes are stored on the separate site visit record* and don’t flow into the job report by default. [MEM-4]\n\nThat lines up with internal docs showing *site visits are a subcomponent of a job*, not the same record. [INT-1] The public docs also only confirm job reports can show job-level notes/details/photos, and separately say site visit notes are used in site visit reporting or can be inserted into estimates/invoices — not job reports. [HC-1]\n\nIf someone needs those notes in a PDF, the current workaround has been to use a *site visit-specific output/workflow* rather than the job report. [MEM-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/work/dynamic-job-reports",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/work/site-visits",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/reporting/raw-data-reporting-tutorials/site-visit-reports"
+      ],
+      "created_at": "2026-09-11T18:08:50.876404+00:00"
+    },
+    {
+      "case_id": "ctl-002",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "Do we integrate with \"Intuit Suite\"? erp.intuit.com (https://erp.intuit.com/)\n\nProspect is moving from QBD to the above Jan 1. Have never heard of Intuit Suite",
+      "july_answer_text": "Yes — if they mean *Intuit Enterprise Suite (IES)*, we *do* integrate with it via the *QuickBooks Online* integration path, not the QuickBooks Desktop one. [MEM-1]\n\nThe main caveat is that IES rides on the QBO API, so standard QBO sync behavior should work, but any *IES-specific features beyond the QB financial layer* may not be supported/documented yet. [MEM-1] If they’re moving from *QBD to IES on Jan 1*, the recommended path is to let Intuit complete the QBD→QBO/IES conversion first, verify the migrated data, and *then* connect FieldPulse to the final account once — connecting to QBD now and converting later can create duplicate sync issues. [INT-1]\n\nOne more gotcha: if they plan to use IES’s umbrella/multi-entity structure, FieldPulse multi-location still requires *2+ separate QB entities*. [MEM-2]",
+      "answer_text": "Yes — if they mean *Intuit Enterprise Suite (IES)*, we *do* integrate with it via the *QuickBooks Online* integration path, not the QuickBooks Desktop one. [MEM-1]\n\nThe main caveat is that IES rides on the QBO API, so standard QBO sync behavior should work, but any *IES-specific features beyond the QB financial layer* may not be supported/documented yet. [MEM-1] If they’re moving from *QBD to IES on Jan 1*, the recommended path is to let Intuit complete the QBD→QBO/IES conversion first, verify the migrated data, and *then* connect FieldPulse to the final account once — connecting to QBD now and converting later can create duplicate sync issues. [INT-1]\n\nOne more gotcha: if they plan to use IES’s umbrella/multi-entity structure, FieldPulse multi-location still requires *2+ separate QB entities*. [MEM-2]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/integrations-partners/accounting/quickbooks-online/pre-sync-quickbooks-online",
+        "https://fieldpulse.mintlify.app/integrations-partners/accounting/quickbooks-desktop/index"
+      ],
+      "created_at": "2026-09-09T14:39:52.157725+00:00"
+    },
+    {
+      "case_id": "ctl-003",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "is there a word limit for invoice notes",
+      "july_answer_text": "There’s *no word limit* for invoice notes — it’s a *character limit*. Invoice notes in FieldPulse allow up to *10,000 characters*. [INT-1]\n\nIf the invoice syncs to QuickBooks, the effective limit is lower:\n- *QuickBooks Online:* 1,000 characters for the customer-facing invoice note. [HC-3]\n- *QuickBooks Desktop:* 4,095 characters. [HC-4]\n\nIf they mean *internal invoice notes* specifically, team knowledge says those don’t have a FieldPulse limit, but QBO truncates synced internal notes at *4,000 characters*. [MEM-1]",
+      "answer_text": "There’s *no word limit* for invoice notes — it’s a *character limit*. Invoice notes in FieldPulse allow up to *10,000 characters*. [INT-1]\n\nIf the invoice syncs to QuickBooks, the effective limit is lower:\n- *QuickBooks Online:* 1,000 characters for the customer-facing invoice note. [HC-3]\n- *QuickBooks Desktop:* 4,095 characters. [HC-4]\n\nIf they mean *internal invoice notes* specifically, team knowledge says those don’t have a FieldPulse limit, but QBO truncates synced internal notes at *4,000 characters*. [MEM-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/troubleshooting-technical-specs/character-limits-validations",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/creating-an-invoice",
+        "https://fieldpulse.mintlify.app/integrations-partners/accounting/quickbooks-online/post-sync-quickbooks-online",
+        "https://fieldpulse.mintlify.app/integrations-partners/accounting/quickbooks-desktop/post-sync-quickbooks-desktop"
+      ],
+      "created_at": "2026-09-04T13:06:34.707895+00:00"
+    },
+    {
+      "case_id": "ctl-004",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.95,
+      "question": "can you collect payment on offline mode?",
+      "july_answer_text": "No — *payment collection is not available in Offline Mode.* You can still view cached payment records on an invoice, preview invoices/estimates, collect signatures, and update invoice status, but you’ll need to reconnect to the internet before taking a payment. [INT-1]\n\nIf the real issue is the *Partner Payments* tab spinning forever, that’s separate from offline mode — the offline docs don’t list a special loading prerequisite beyond being online. [INT-1]",
+      "answer_text": "No — *payment collection is not available in Offline Mode.* You can still view cached payment records on an invoice, preview invoices/estimates, collect signatures, and update invoice status, but you’ll need to reconnect to the internet before taking a payment. [INT-1]\n\nIf the real issue is the *Partner Payments* tab spinning forever, that’s separate from offline mode — the offline docs don’t list a special loading prerequisite beyond being online. [INT-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/offline-mode/index",
+        "https://fieldpulse.mintlify.app/offline-mode/estimates-invoices-offline-mode",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/payments/collecting-payments/index"
+      ],
+      "created_at": "2026-09-01T14:16:48.408294+00:00"
+    },
+    {
+      "case_id": "ctl-005",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "Hi team, did we remove the toggle option for including Wisetack as a payment option?\nAre qualified invoices now automatically showing the Wisetack financing option, or is there still a way for users to manually enable or disable Wisetack on a per-invoice basis?",
+      "july_answer_text": "Yes — the *per-invoice/per-estimate Wisetack toggle was removed*. That control now exists for *Acorn only*; Wisetack does *not* have a manual enable/disable option on individual documents. Only one financing integration can be enabled at a time. [MEM-1]\n\nFor Wisetack, the behavior is now automatic: if Wisetack is enabled on the account, it shows on *qualifying* estimates and invoices rather than being manually toggled per document. Qualification is *residential customers* and *$500–$25,000*; commercial customers or out-of-range amounts will not show the financing option. [MEM-4]\n\nOne gotcha: the Wisetack financing link is *customer-facing only*, so the FP user may not see it in their own preview the way they expect. [MEM-3]\n\nThere is no current per-document workaround — the only control today is effectively at the *account level* by enabling/disabling Wisetack for the business. [MEM-2]",
+      "answer_text": "Yes — the *per-invoice/per-estimate Wisetack toggle was removed*. That control now exists for *Acorn only*; Wisetack does *not* have a manual enable/disable option on individual documents. Only one financing integration can be enabled at a time. [MEM-1]\n\nFor Wisetack, the behavior is now automatic: if Wisetack is enabled on the account, it shows on *qualifying* estimates and invoices rather than being manually toggled per document. Qualification is *residential customers* and *$500–$25,000*; commercial customers or out-of-range amounts will not show the financing option. [MEM-4]\n\nOne gotcha: the Wisetack financing link is *customer-facing only*, so the FP user may not see it in their own preview the way they expect. [MEM-3]\n\nThere is no current per-document workaround — the only control today is effectively at the *account level* by enabling/disabling Wisetack for the business. [MEM-2]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/integrations-partners/financing/wisetack-consumer-financing-integration"
+      ],
+      "created_at": "2026-09-01T13:28:23.630586+00:00"
+    },
+    {
+      "case_id": "ctl-006",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.9,
+      "question": "Are FP Payments/Rainforest emails sent to founding user only or is it to all admins?",
+      "july_answer_text": "It *depends on the email type*:\n\n- *Most FP Payments / Rainforest emails go to all admins* — including successful payment, deposit/funds deposited, and card charged notifications. There’s currently *no UI or notification setting* to limit those recipients. [MEM-8]\n- *ACH return emails are the exception* — those go to the *founding admin* rather than all admins. [MEM-2]\n- Chargeback / dispute action emails are sent by FieldPulse based on Rainforest webhooks. [INT-1]\n\nIf the ask is “can this be changed?”, the current answer is *no* — turning notification settings on/off in FieldPulse doesn’t stop these, and changing recipients would need a feature request. [MEM-4]",
+      "answer_text": "It *depends on the email type*:\n\n- *Most FP Payments / Rainforest emails go to all admins* — including successful payment, deposit/funds deposited, and card charged notifications. There’s currently *no UI or notification setting* to limit those recipients. [MEM-8]\n- *ACH return emails are the exception* — those go to the *founding admin* rather than all admins. [MEM-2]\n- Chargeback / dispute action emails are sent by FieldPulse based on Rainforest webhooks. [INT-1]\n\nIf the ask is “can this be changed?”, the current answer is *no* — turning notification settings on/off in FieldPulse doesn’t stop these, and changing recipients would need a feature request. [MEM-4]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/payments/start-here/fieldpulse-payments-application",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/payments/collecting-payments/tap-to-pay-on-iphone",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/communications-notifications/notifications-master-guide",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/users-teams/adding-new-users",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/payments/start-here/fieldpulse-payments"
+      ],
+      "created_at": "2026-08-28T16:21:19.628916+00:00"
+    },
+    {
+      "case_id": "ctl-007",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "if customer communications are enabled with triggers and customer has engage, will it send from a no reply number or the engage number?",
+      "july_answer_text": "It depends on the *Send Customer Communication via Engage Account* toggle.\n\n- *If ON*: trigger-based customer communications send from an *Engage number*, not the no-reply toll-free number. Which Engage line gets used depends on the routing setup: Smart SMS Delegation uses the assigned user’s line, then the owner’s, then another available Engage line if needed. [HC-1]\n- *If OFF*: they send from the generic FieldPulse *no-reply* number, even if the customer/account has Engage enabled. [MEM-3]\n\nSo *having Engage alone isn’t enough* — the toggle has to be enabled for those automated messages to come from Engage. [HC-1]",
+      "answer_text": "It depends on the *Send Customer Communication via Engage Account* toggle.\n\n- *If ON*: trigger-based customer communications send from an *Engage number*, not the no-reply toll-free number. Which Engage line gets used depends on the routing setup: Smart SMS Delegation uses the assigned user’s line, then the owner’s, then another available Engage line if needed. [HC-1]\n- *If OFF*: they send from the generic FieldPulse *no-reply* number, even if the customer/account has Engage enabled. [MEM-3]\n\nSo *having Engage alone isn’t enough* — the toggle has to be enabled for those automated messages to come from Engage. [HC-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/communications-notifications/customer-communications",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/communications-notifications/customer-notification-preferences"
+      ],
+      "created_at": "2026-08-28T16:07:45.172645+00:00"
+    },
+    {
+      "case_id": "ctl-008",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.8,
+      "question": "Is there anyway we can opt someone back in for communications through FieldPulse?",
+      "july_answer_text": "No — if they opted out of SMS by replying *STOP*, you *cannot* opt them back in from FieldPulse. They have to re-subscribe themselves by texting *START* from their own number. Re-checking SMS in Notification Settings will not override the opt-out. [INT-1]\n\nWhile they’re opted out, *all* SMS from FieldPulse is blocked — automated notifications, one-off texts, and links sent by SMS, including Engage messages. You can still contact them by *email or phone*. [INT-1]",
+      "answer_text": "No — if they opted out of SMS by replying *STOP*, you *cannot* opt them back in from FieldPulse. They have to re-subscribe themselves by texting *START* from their own number. Re-checking SMS in Notification Settings will not override the opt-out. [INT-1]\n\nWhile they’re opted out, *all* SMS from FieldPulse is blocked — automated notifications, one-off texts, and links sent by SMS, including Engage messages. You can still contact them by *email or phone*. [INT-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/communications-notifications/customer-notification-preferences"
+      ],
+      "created_at": "2026-08-24T16:26:15.051623+00:00"
+    },
+    {
+      "case_id": "ctl-009",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": ", when using the material list as the inventory deduction method, does the material list have to be in the completed status for the inventory to actually be removed?",
+      "july_answer_text": "Yes — if the inventory deduction method is set to *Material List*, inventory is only removed when the material list reaches *Completed* status. [INT-1]\n\nUntil it’s completed, inventory is *not* deducted yet. Once the material list is completed, the deduction is applied and the setting locks; if the record is moved back to *Draft*, the inventory is returned and the toggle becomes editable again. [HC-1]",
+      "answer_text": "Yes — if the inventory deduction method is set to *Material List*, inventory is only removed when the material list reaches *Completed* status. [INT-1]\n\nUntil it’s completed, inventory is *not* deducted yet. Once the material list is completed, the deduction is applied and the setting locks; if the record is moved back to *Draft*, the inventory is returned and the toggle becomes editable again. [HC-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/item-list-inventory/deducting-inventory-inventory-count"
+      ],
+      "created_at": "2026-08-21T15:36:30.534979+00:00"
+    },
+    {
+      "case_id": "ctl-010",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.5,
+      "question": "Can we change font size in the app",
+      "july_answer_text": "No — there isn’t an *in-app* setting to change font size in FieldPulse web or mobile. [HC-1]\n\nFont size follows the *device or browser settings* instead, so the workaround is to adjust:\n- *iPhone/iPad* text size in iOS settings [HC-1]\n- *Android* font/display size in device settings [HC-1]\n- *Chrome* page zoom or browser appearance settings [HC-1]\n\nIf they mean *PDFs* specifically, estimate/invoice font size is handled separately in the PDF settings rather than as a global app font setting. [HC-2]\n\nConfluence didn’t return anything useful here, so the help center answer is the best current source. [HC-1]",
+      "answer_text": "No — there isn’t an *in-app* setting to change font size in FieldPulse web or mobile. [HC-1]\n\nFont size follows the *device or browser settings* instead, so the workaround is to adjust:\n- *iPhone/iPad* text size in iOS settings [HC-1]\n- *Android* font/display size in device settings [HC-1]\n- *Chrome* page zoom or browser appearance settings [HC-1]\n\nIf they mean *PDFs* specifically, estimate/invoice font size is handled separately in the PDF settings rather than as a global app font setting. [HC-2]\n\nConfluence didn’t return anything useful here, so the help center answer is the best current source. [HC-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/troubleshooting-technical-specs/supported-devices-and-browsers",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/default-estimate-invoice-settings"
+      ],
+      "created_at": "2026-08-20T22:40:55.418401+00:00"
+    },
+    {
+      "case_id": "ctl-011",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.95,
+      "question": "should we be able to take payments offline?",
+      "july_answer_text": "No — *payments cannot be collected offline*. Offline Mode lets users view cached invoice/payment info and make some invoice updates, but *payment collection is unavailable until the device reconnects to the internet*. [INT-1]\n\nThe public docs say the same thing: you can still preview invoices, collect signatures, and update certain statuses offline, but not take a payment. [HC-1]",
+      "answer_text": "No — *payments cannot be collected offline*. Offline Mode lets users view cached invoice/payment info and make some invoice updates, but *payment collection is unavailable until the device reconnects to the internet*. [INT-1]\n\nThe public docs say the same thing: you can still preview invoices, collect signatures, and update certain statuses offline, but not take a payment. [HC-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/offline-mode/index",
+        "https://fieldpulse.mintlify.app/offline-mode/estimates-invoices-offline-mode",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/payments/index",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/payments/collecting-payments/index"
+      ],
+      "created_at": "2026-08-17T14:28:22.616165+00:00"
+    },
+    {
+      "case_id": "ctl-012",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.8,
+      "question": "Why can I not see the option to choose a status workflow when creating a new job?",
+      "july_answer_text": "The *Custom Status Workflow* dropdown only shows on job creation if the account already has *more than one* workflow available. If they only have the default workflow, there’s nothing to choose from, so the option won’t appear. [HC-2]\n\nWhat to check:\n- Go to *Company Settings → Jobs → Custom Status* and confirm at least one additional custom workflow has been created and saved. [HC-1]\n- If this is a franchise account, note that *only the franchisor can update workflows*, so the location may be visible but not editable by the franchisee. [INT-1]\n- If they expected a prebuilt workflow to exist, the account may still need a workflow template imported. Templates are imported from *Master → ClearPath Import*. [INT-2]\n\nIf multiple workflows already exist and the dropdown still isn’t showing, I couldn’t find another documented cause in internal docs. [HC-1]",
+      "answer_text": "The *Custom Status Workflow* dropdown only shows on job creation if the account already has *more than one* workflow available. If they only have the default workflow, there’s nothing to choose from, so the option won’t appear. [HC-2]\n\nWhat to check:\n- Go to *Company Settings → Jobs → Custom Status* and confirm at least one additional custom workflow has been created and saved. [HC-1]\n- If this is a franchise account, note that *only the franchisor can update workflows*, so the location may be visible but not editable by the franchisee. [INT-1]\n- If they expected a prebuilt workflow to exist, the account may still need a workflow template imported. Templates are imported from *Master → ClearPath Import*. [INT-2]\n\nIf multiple workflows already exist and the dropdown still isn’t showing, I couldn’t find another documented cause in internal docs. [HC-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/work/custom-status-workflows",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/work/creating-a-job"
+      ],
+      "created_at": "2026-08-14T21:06:15.213253+00:00"
+    },
+    {
+      "case_id": "ctl-013",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.55,
+      "question": "how to setup in Engage, \"Your call is been recorded\" for outbound calls?",
+      "july_answer_text": "Yes — that announcement is controlled at the *phone line* level in Engage, not per user or per individual outbound call. [HC-1]\n\n*To turn on “your call is being recorded” for outbound calls:*\n1. Go to *Engage > Settings > Phone Numbers*. [HC-1]\n2. Open the phone number/line you want to update. [HC-1]\n3. Turn on *Record Calls*. [HC-1]\n4. Make sure *Play audio to inform the customer of the recorded call* is turned *On*. [HC-1]\n\nWith those two settings enabled, Engage will record *both inbound and outbound calls* on that line and play the recording notice automatically. [HC-1] This setting is documented as *on by default*. [HC-2]\n\nInternal docs didn’t add anything more specific on outbound announcement setup beyond the help center steps.",
+      "answer_text": "Yes — that announcement is controlled at the *phone line* level in Engage, not per user or per individual outbound call. [HC-1]\n\n*To turn on “your call is being recorded” for outbound calls:*\n1. Go to *Engage > Settings > Phone Numbers*. [HC-1]\n2. Open the phone number/line you want to update. [HC-1]\n3. Turn on *Record Calls*. [HC-1]\n4. Make sure *Play audio to inform the customer of the recorded call* is turned *On*. [HC-1]\n\nWith those two settings enabled, Engage will record *both inbound and outbound calls* on that line and play the recording notice automatically. [HC-1] This setting is documented as *on by default*. [HC-2]\n\nInternal docs didn’t add anything more specific on outbound announcement setup beyond the help center steps.",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/features-add-ons/engage-phone-system/set-up-configuration/phone-line-settings"
+      ],
+      "created_at": "2026-08-14T18:34:50.728548+00:00"
+    },
+    {
+      "case_id": "ctl-014",
+      "cohort": "control",
+      "quota_key": "answered_confirmed",
+      "july_category": "answered_confirmed",
+      "category": "answered_confirmed",
+      "july_answer_type": null,
+      "july_confidence": 0.65,
+      "question": "Is CFR available for fullstack?",
+      "july_answer_text": "Yes — *Card Fee Recovery is available for Full Stack Payments* users. Internal docs explicitly list it as available to *FieldPulse Payments (Rainforest) customers in the US, CardConnect, and Full Stack Payments users*, and *not available for Canadian or Australian accounts*. [INT-1]\n\nThe public docs are consistent with that: CFR is available through *Partner Payments*, and *Fullstack* is one of the supported partner processors. [HC-1]",
+      "answer_text": "Yes — *Card Fee Recovery is available for Full Stack Payments* users. Internal docs explicitly list it as available to *FieldPulse Payments (Rainforest) customers in the US, CardConnect, and Full Stack Payments users*, and *not available for Canadian or Australian accounts*. [INT-1]\n\nThe public docs are consistent with that: CFR is available through *Partner Payments*, and *Fullstack* is one of the supported partner processors. [HC-1]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/payments/payment-provider-options"
+      ],
+      "created_at": "2026-08-13T22:25:17.998202+00:00"
+    },
+    {
+      "case_id": "ctl-015",
+      "cohort": "control",
+      "quota_key": "answered_unconfirmed",
+      "july_category": "answered_unconfirmed",
+      "category": "answered_unconfirmed",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "where to check cost basis in reporting?",
+      "july_answer_text": "If they mean *standard reporting*, send them to the *Invoice Cost Basis & Profit Margin* report and make sure the *Cost Basis* column is enabled. [HC-3]\n\nIf they mean *job-level costing/reporting*, that’s in *Job Costing* — either on the *Job > Cost* tab or in the *Job Costing* report. It has broader cost data than the invoice cost basis view and is configured under *Company Settings > Jobs > Job Costing*. [INT-2]\n\nOne gotcha: users with *Limited* or *Service Agent* roles can’t see Job Costing, and Team Managers only see it if an admin grants permission. [INT-2]",
+      "answer_text": "If they mean *standard reporting*, send them to the *Invoice Cost Basis & Profit Margin* report and make sure the *Cost Basis* column is enabled. [HC-3]\n\nIf they mean *job-level costing/reporting*, that’s in *Job Costing* — either on the *Job > Cost* tab or in the *Job Costing* report. It has broader cost data than the invoice cost basis view and is configured under *Company Settings > Jobs > Job Costing*. [INT-2]\n\nOne gotcha: users with *Limited* or *Service Agent* roles can’t see Job Costing, and Team Managers only see it if an admin grants permission. [INT-2]",
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/commission-markups-profitability/cost-basis-and-invoice-profitability",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/commission-markups-profitability/splitting-commissions-among-multiple-team-members",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/reporting/raw-data-reporting-tutorials/invoice-reports"
+      ],
+      "created_at": "2026-09-16T17:37:13.054338+00:00"
+    },
+    {
+      "case_id": "gap-001",
+      "cohort": "gap",
+      "quota_key": "escalation",
+      "july_category": "escalation",
+      "category": "escalation",
+      "july_answer_type": null,
+      "july_confidence": 0.9,
+      "question": "what does the 'classic' selection on the default calendar starting date do",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/scheduling-dispatch/setting-the-default-calendar-start-date"
+      ],
+      "created_at": "2026-09-11T19:45:13.817643+00:00"
+    },
+    {
+      "case_id": "gap-002",
+      "cohort": "gap",
+      "quota_key": "escalation",
+      "july_category": "escalation",
+      "category": "escalation",
+      "july_answer_type": null,
+      "july_confidence": 0.9,
+      "question": "is help center translated to spanish? how do i access?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/index",
+        "https://fieldpulse.mintlify.app/getting-started/core-features-first-tasks/in-the-field-overview-mobile-experience/mobile-app-overview-admins-team-managers",
+        "https://fieldpulse.mintlify.app/what-s-new/fieldpulse-feature-roadmap"
+      ],
+      "created_at": "2026-09-11T16:42:22.304259+00:00"
+    },
+    {
+      "case_id": "gap-003",
+      "cohort": "gap",
+      "quota_key": "escalation",
+      "july_category": "escalation",
+      "category": "escalation",
+      "july_answer_type": null,
+      "july_confidence": 0.75,
+      "question": "@someone Can customers accept estimates through the customer portal without going to the estimate dynamic link?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/customers/customer-portal",
+        "https://fieldpulse.mintlify.app/training-resources/what-your-customer-sees/customer-portal-what-your-customer-sees",
+        "https://fieldpulse.mintlify.app/training-resources/what-your-customer-sees/estimates-invoices-what-your-customers-see"
+      ],
+      "created_at": "2026-09-10T22:19:20.760689+00:00"
+    },
+    {
+      "case_id": "gap-004",
+      "cohort": "gap",
+      "quota_key": "escalation",
+      "july_category": "escalation",
+      "category": "escalation",
+      "july_answer_type": null,
+      "july_confidence": 0.4,
+      "question": "what system is used to get address recommendations when adding a location in fieldpulse?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/customers/multi-location-multi-contact-customers",
+        "https://fieldpulse.mintlify.app/getting-started/account-setup-access/setting-up-google-single-sign-on"
+      ],
+      "created_at": "2026-09-10T21:08:54.811579+00:00"
+    },
+    {
+      "case_id": "gap-005",
+      "cohort": "gap",
+      "quota_key": "escalation",
+      "july_category": "escalation",
+      "category": "escalation",
+      "july_answer_type": null,
+      "july_confidence": 0.8,
+      "question": "Will the timesheets logged on the job record disappear when a user is deactivated?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/users-teams/user-roles",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/work/employee-timesheets"
+      ],
+      "created_at": "2026-09-09T15:09:42.061952+00:00"
+    },
+    {
+      "case_id": "gap-006",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "What is the best customer-facing presentation for the monitoring amount: $0 informational line, grouping description, or proposal note? What is the recommended first-month workflow if monitoring begins at installation: bill month one on the install invoice, or start the Recurring Billing sequence immediately??",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/recurring-billing",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/line-item-bundles-groupings",
+        "https://fieldpulse.mintlify.app/troubleshooting-technical-specs/character-limits-validations"
+      ],
+      "created_at": "2026-09-16T16:49:27.697496+00:00"
+    },
+    {
+      "case_id": "gap-007",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "is there a way to have stored numbers in engage  without adding additional phone lines",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/features-add-ons/engage-phone-system/using-engage/additional-contacts-alternate-phone-numbers",
+        "https://fieldpulse.mintlify.app/features-add-ons/engage-phone-system/set-up-configuration/phone-line-settings"
+      ],
+      "created_at": "2026-09-16T16:38:09.520266+00:00"
+    },
+    {
+      "case_id": "gap-008",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "does grouping transfer over when you convert an estimate with addons to an invoice?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/creating-an-invoice",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/line-item-bundles-groupings",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/estimate-options-add-ons",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/creating-an-estimate"
+      ],
+      "created_at": "2026-09-15T21:58:26.144326+00:00"
+    },
+    {
+      "case_id": "gap-009",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 0.5,
+      "question": "when signing an invoice, can the typed name show up instead of the signature / where does that go internally",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/requesting-a-customer-signature",
+        "https://fieldpulse.mintlify.app/training-resources/what-your-customer-sees/estimates-invoices-what-your-customers-see"
+      ],
+      "created_at": "2026-09-15T21:16:44.496907+00:00"
+    },
+    {
+      "case_id": "gap-010",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 0.65,
+      "question": "what does classic mean?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/scheduling-dispatch/setting-the-default-calendar-start-date",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/scheduling-dispatch/index"
+      ],
+      "created_at": "2026-09-15T16:15:56.420197+00:00"
+    },
+    {
+      "case_id": "gap-011",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 0.35,
+      "question": "why isnt fieldpulse showing under my phone notification settings?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/other/troubleshooting-push-notifications"
+      ],
+      "created_at": "2026-09-14T21:32:28.98884+00:00"
+    },
+    {
+      "case_id": "gap-012",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "and will it confuse quickbooks if there are too many child accounts to one parent account?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/training-resources/platform-best-practice-recommendations/customer-account-structures-parent-child-vs-multi-location",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/estimates-invoices/bill-to-parent",
+        "https://fieldpulse.mintlify.app/integrations-partners/accounting/quickbooks-desktop/pre-sync-quickbooks-desktop"
+      ],
+      "created_at": "2026-09-14T16:20:33.849385+00:00"
+    },
+    {
+      "case_id": "gap-013",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 1,
+      "question": "is there a limit to the number of children a parent account can have under it?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/customers/creating-related-customers",
+        "https://fieldpulse.mintlify.app/troubleshooting-technical-specs/character-limits-validations"
+      ],
+      "created_at": "2026-09-14T16:19:31.131956+00:00"
+    },
+    {
+      "case_id": "gap-014",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 0.95,
+      "question": "after a purchase order is sent, can it be edited and resent?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/using-fieldpulse/purchase-orders/purchase-orders"
+      ],
+      "created_at": "2026-09-11T21:13:29.576849+00:00"
+    },
+    {
+      "case_id": "gap-015",
+      "cohort": "gap",
+      "quota_key": "model_detected",
+      "july_category": "model_detected",
+      "category": "model_detected",
+      "july_answer_type": null,
+      "july_confidence": 0.9,
+      "question": "is there a way to print a proposal without the acorn loan showing on it?",
+      "july_answer_text": null,
+      "answer_text": null,
+      "cited_hc_urls": [
+        "https://fieldpulse.mintlify.app/integrations-partners/financing/acorn-finance-integration",
+        "https://fieldpulse.mintlify.app/features-add-ons/sales-suite/dynamic-proposals",
+        "https://fieldpulse.mintlify.app/using-fieldpulse/payments/how-to/collecting-payments-3-general-methods"
+      ],
+      "created_at": "2026-09-11T15:57:30.709228+00:00"
+    }
+  ]
+}
