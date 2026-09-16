@@ -455,10 +455,21 @@ export function createRun({
 
         if (recheckCandidateId) {
           const current = await candidates.findById(recheckCandidateId);
+          // Scored over every sighting the candidate has, exactly as the dedup
+          // path does -- one answered event is not the whole history, and a
+          // MISSING gap seen by a customer-facing source must not fall to P3
+          // just because the answer happened to arrive through Juju. The
+          // event's own row is already linked, so `linked` normally contains
+          // it; `[event]` is only the fallback for a failed read.
+          const linked = await candidates.linkedEvents(recheckCandidateId);
           const patch = {
             destination: result.destination,
             verdict: result.verdict,
-            priority,
+            priority: computePriority({
+              verdict: result.verdict,
+              events: linked.length > 0 ? linked : [event],
+              now: startedAt,
+            }),
             truth_kind: truthKind,
             needs_answer: truthKind === 'none',
             question_paraphrase: result.question_paraphrase,
@@ -471,7 +482,9 @@ export function createRun({
             paste_request: result.paste_request,
             confidence: result.confidence,
             evidence: { ...result.evidence, trace },
-            last_seen: event.occurred_at,
+            // No `last_seen`: this is an event the candidate already counted,
+            // and writing its occurred_at back would drag the timestamp
+            // backwards past later sightings.
           };
           // Promote a candidate that was only logged and now earns a card;
           // never walk a posted or actioned one backwards, and never touch
@@ -528,7 +541,6 @@ export function createRun({
         stats.candidates_new += 1;
         await candidates.linkEvent(candidate.id, event.id);
         await events.markProcessed(event.id, 'candidate', { candidateId: candidate.id });
-        log(LANE, `candidate #${candidate.id} ${result.verdict} ${status} from ${label}`);
         log(LANE, `candidate #${candidate.id} ${result.verdict} ${status} from ${label}`);
       }
 

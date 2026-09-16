@@ -1202,3 +1202,75 @@ test('the shortcut rules are read once per run, not once per event', async () =>
   assert.equal(reads, 2, 'the injected rules are what every event is matched against');
   assert.deepEqual(runCheck.seen, ['8803'], 'the shortcut still fires from the injected rules');
 });
+
+// ---------------------------------------------------------------------------
+// Review round 2
+// ---------------------------------------------------------------------------
+
+test('a re-check keeps the priority the whole linked history earns, and last_seen', async () => {
+  // Two sightings: an Ava (customer-facing) one on Sep 12, and the Juju one
+  // whose owner answer has just arrived. Scored over both, MISSING is P2;
+  // scored over the Juju event alone it would fall to P3.
+  const { run, repos } = harness({
+    script: { default: checkResult({ verdict: 'MISSING', question_paraphrase: 'Recurring invoices?' }) },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'ava',
+          source_event_id: 'a-1',
+          occurred_at: '2026-09-12T00:00:00.000Z',
+          question: 'Does FieldPulse support recurring invoices?',
+          truth_kind: 'none',
+          detail: {},
+          processed_at: '2026-09-12T01:00:00.000Z',
+          outcome: 'candidate',
+          candidate_id: 1,
+        },
+        {
+          id: 2,
+          source: 'juju',
+          source_event_id: '5010',
+          occurred_at: '2026-09-10T00:00:00.000Z',
+          question: 'Does FieldPulse support recurring invoices?',
+          truth_answer: 'Yes, from Invoices > Recurring.',
+          truth_kind: 'human',
+          detail: {},
+          processed_at: null,
+          outcome: null,
+          candidate_id: 1,
+        },
+      ],
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-recurring',
+          fingerprint_terms: ['invoice', 'recur'],
+          category: 'using-fieldpulse',
+          destination: 'help_center',
+          verdict: 'MISSING',
+          priority: 'P2',
+          status: 'posted',
+          slack_ts: 'ts-old',
+          truth_kind: 'none',
+          needs_answer: true,
+          question_paraphrase: 'Recurring invoices?',
+          event_count: 2,
+          first_seen: '2026-09-10T00:00:00.000Z',
+          last_seen: '2026-09-12T00:00:00.000Z',
+          created_at: '2026-09-10T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+
+  await run(args());
+
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.priority, 'P2', 'priority is scored over every linked sighting, not just this one');
+  assert.equal(candidate.last_seen, '2026-09-12T00:00:00.000Z', 'last_seen must not move backwards');
+  assert.equal(candidate.event_count, 2, 'a re-check is not another sighting');
+  assert.equal(candidate.truth_kind, 'human');
+  assert.equal(candidate.needs_answer, false);
+  assert.equal(repos.state.events[1].outcome, 'candidate');
+});
