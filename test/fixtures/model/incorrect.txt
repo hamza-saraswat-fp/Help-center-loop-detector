@@ -1,0 +1,21 @@
+{
+  "destination": "help_center",
+  "verdict": "INCORRECT",
+  "question_paraphrase": "Is there a tag that blocks scheduling for a customer?",
+  "truth_summary": "Applying the Do Not Service tag prevents any future scheduling for a customer.",
+  "target_article_path": "using-fieldpulse/customers/tags.mdx",
+  "target_article_url": null,
+  "says_now": "Tags help you group customers for filtering and reporting.",
+  "should_say": "Most tags group customers for filtering and reporting. The Do Not Service tag also blocks new job creation for that customer.",
+  "proposed_change": "Add a note under Adding a Tag that the Do Not Service tag changes scheduling behavior, not just filtering.",
+  "paste_request": "In \"Tagging Customers\", replace the sentence \"Tags help you group customers for filtering and reporting.\" with a sentence that also covers the Do Not Service tag's scheduling effect.",
+  "confidence": 88,
+  "claims": [
+    {
+      "claim": "Tags are used only for filtering and reporting, with no effect on scheduling.",
+      "status": "contradicted",
+      "article_path": "using-fieldpulse/customers/tags.mdx",
+      "sentence": "Tags help you group customers for filtering and reporting."
+    }
+  ]
+}

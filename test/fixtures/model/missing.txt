@@ -1,0 +1,14 @@
+{
+  "destination": "help_center",
+  "verdict": "MISSING",
+  "question_paraphrase": "How do per-line tax rates interact with the whole invoice's tax rate?",
+  "truth_summary": null,
+  "target_article_path": null,
+  "target_article_url": null,
+  "says_now": null,
+  "should_say": "A tax rate set on a line item overrides the invoice-level tax rate for that line only.",
+  "proposed_change": "Create a new article explaining how per-line item tax rates and the whole-invoice tax rate interact.",
+  "paste_request": "Create a new article \"How Tax Rates Apply to Line Items and Invoices\" under using-fieldpulse covering per-line vs whole-invoice tax rate precedence.",
+  "confidence": 55,
+  "claims": []
+}

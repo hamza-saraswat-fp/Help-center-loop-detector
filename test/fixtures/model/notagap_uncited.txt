@@ -1,0 +1,21 @@
+{
+  "destination": "help_center",
+  "verdict": "NOT_A_GAP",
+  "question_paraphrase": "Is there a tag to block scheduling for a customer?",
+  "truth_summary": "Yes, applying the Do Not Service tag prevents future scheduling for a customer.",
+  "target_article_path": "unparented/do-not-service-tag.mdx",
+  "target_article_url": null,
+  "says_now": null,
+  "should_say": null,
+  "proposed_change": null,
+  "paste_request": null,
+  "confidence": 92,
+  "claims": [
+    {
+      "claim": "Applying the Do Not Service tag prevents future scheduling for a customer.",
+      "status": "supported",
+      "article_path": "unparented/do-not-service-tag.mdx",
+      "sentence": "Apply this tag to prevent any future scheduling for a customer."
+    }
+  ]
+}
