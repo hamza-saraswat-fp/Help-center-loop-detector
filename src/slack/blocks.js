@@ -79,7 +79,19 @@ export function assertNoForbiddenMentions(text, { allow = [] } = {}) {
 export function truncateSlackText(text, max) {
   const value = text ?? '';
   if (value.length <= max) return value;
-  return `${value.slice(0, Math.max(0, max - 1))}…`;
+
+  let cut = Math.max(0, max - 1);
+  // `slice` counts UTF-16 code units, so a naive cut can land inside a
+  // surrogate pair (e.g. an emoji) and leave a lone high surrogate at the
+  // end. Back off one more unit when that would happen — the low surrogate
+  // that pairs with it lives at `cut`, which is about to be dropped.
+  if (cut > 0) {
+    const code = value.charCodeAt(cut - 1);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      cut -= 1;
+    }
+  }
+  return `${value.slice(0, cut)}…`;
 }
 
 function formatShortDate(value) {
@@ -167,6 +179,15 @@ function sectionsToCard(plainLines, mrkdwnLines) {
   return { text, blocks };
 }
 
+// The header line (`[P1 · INCORRECT] paraphrase`) is bold in the mrkdwn
+// blocks Slack renders, but stays unbolded in the plain-text `text`
+// fallback — that field is a notification/accessibility fallback, not
+// mrkdwn, so `*...*` would show up as literal asterisks there.
+function boldFirstLine(lines) {
+  if (lines.length === 0) return lines;
+  return [`*${lines[0]}*`, ...lines.slice(1)];
+}
+
 /**
  * A gap-candidate card: `{ text, blocks }` ready for `postCard`. Runs
  * `assertNoForbiddenMentions` on the assembled (pre-truncation) text before
@@ -205,7 +226,7 @@ export function buildCandidateCard({ candidate, linked = [], now = new Date() })
   const fullText = lines.join('\n');
   assertNoForbiddenMentions(fullText);
 
-  return sectionsToCard(lines, lines);
+  return sectionsToCard(lines, boldFirstLine(lines));
 }
 
 /**
@@ -245,7 +266,7 @@ export function buildNeedsAnswerCard({ candidate, linked = [], owners = [], ment
   const fullText = lines.join('\n');
   assertNoForbiddenMentions(fullText, { allow: mention ? owners : [] });
 
-  return sectionsToCard(lines, lines);
+  return sectionsToCard(lines, boldFirstLine(lines));
 }
 
 /**

@@ -118,6 +118,14 @@ test('buildCandidateCard: line order matches the manual', () => {
   assert.ok(evidenceIdx < toShipIdx);
 });
 
+test('buildCandidateCard: header is bold mrkdwn in the block but unbolded in the text fallback', () => {
+  const candidate = baseCandidate();
+  const card = buildCandidateCard({ candidate, linked: linkedFixture(), now: NOW });
+  assert.ok(card.blocks[0].text.text.startsWith('*['), card.blocks[0].text.text);
+  assert.ok(card.text.startsWith('['), card.text);
+  assert.ok(!card.text.startsWith('*['), card.text);
+});
+
 test('buildCandidateCard: null priority drops the "P1 ·" segment', () => {
   const candidate = baseCandidate({ priority: null });
   const card = buildCandidateCard({ candidate, linked: linkedFixture(), now: NOW });
@@ -214,6 +222,13 @@ test('buildNeedsAnswerCard: header uses NEEDS ANSWER prefix with optional priori
   assert.match(card.text, /Question: Customer tags/);
   assert.match(card.text, /Owner: using-fieldpulse/);
   assert.match(card.text, /To resolve: reply in this thread with the correct answer; the loop re-checks it next run\./);
+});
+
+test('buildNeedsAnswerCard: header is bold mrkdwn in the block but unbolded in the text fallback', () => {
+  const candidate = baseCandidate({ needs_answer: true, verdict: null, truth_kind: 'none', priority: 'P2' });
+  const card = buildNeedsAnswerCard({ candidate, linked: linkedFixture(), now: NOW });
+  assert.ok(card.blocks[0].text.text.startsWith('*['), card.blocks[0].text.text);
+  assert.ok(!card.text.startsWith('*['), card.text);
 });
 
 test('buildDuplicateReply: formats "now 3x (Juju 2, Sidecar 1)" and Latest', () => {
@@ -344,6 +359,13 @@ test('truncateSlackText: cuts to exactly max with trailing ellipsis', () => {
   const truncated = truncateSlackText(text, 10);
   assert.equal(truncated.length, 10);
   assert.ok(truncated.endsWith('…'));
+});
+
+test('truncateSlackText: never splits a surrogate pair', () => {
+  const text = `${'a'.repeat(8)}😀bbbb`;
+  const truncated = truncateSlackText(text, 10);
+  assert.ok(truncated.length <= 10, `length ${truncated.length}`);
+  assert.doesNotMatch(truncated, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
 });
 
 test('ownersFor: falls back to general when category is unmapped', () => {
