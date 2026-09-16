@@ -73,7 +73,7 @@ test('incorrect fixture: verdict INCORRECT, says_now/should_say non-null, tags a
   assert.deepEqual(kinds, ['question', 'answer', 'category', 'mintlify']);
 });
 
-test('cited Intercom-style url normalizes and lands the tags article first in files_read and in cited_paths', async () => {
+test('cited Intercom-style url normalizes through the redirect chain into evidence.cited_paths', async () => {
   const index = buildIndex();
   const runCheck = createRunCheck(baseDeps());
 
@@ -88,7 +88,62 @@ test('cited Intercom-style url normalizes and lands the tags article first in fi
   const result = await runCheck(event, index);
 
   assert.ok(result.evidence.cited_paths.includes('using-fieldpulse/customers/tags.mdx'));
-  assert.equal(result.evidence.files_read[0], 'using-fieldpulse/customers/tags.mdx');
+});
+
+test('a cited article that is not the top lexical hit still lands first in files_read', async () => {
+  const index = buildIndex();
+  const runCheck = createRunCheck(baseDeps());
+
+  // The question is about tags, so tags.mdx wins lexical search outright and
+  // first-job.mdx (no mention of tags at all) scores zero and would not be
+  // read on its own merit. Citing it must still force it into files_read[0]
+  // ahead of the real top lexical match, or "cited paths always included
+  // first" is untested by anything that couldn't already pass by accident.
+  const event = juju({
+    question: 'Is there a tag that blocks scheduling for a customer?',
+    truth_answer: 'Applying the Do Not Service tag prevents any future scheduling for a customer.',
+    truth_kind: 'human',
+    category: 'core-platform',
+    cited_hc_urls: [{ url: 'https://help.fieldpulse.com/getting-started/first-job' }],
+  });
+
+  const result = await runCheck(event, index);
+
+  assert.ok(result.evidence.cited_paths.includes('getting-started/first-job.mdx'));
+  assert.equal(result.evidence.files_read[0], 'getting-started/first-job.mdx');
+  assert.ok(result.evidence.files_read.includes('using-fieldpulse/customers/tags.mdx'));
+});
+
+test('a Mintlify hit never displaces the real top lexical article from files_read[0]', async () => {
+  const index = buildIndex();
+  const runCheck = createRunCheck(
+    baseDeps({
+      searchMintlify: fakeMintlify([
+        {
+          title: 'Creating Your First Job',
+          url: 'https://help.fieldpulse.com/getting-started/first-job',
+          snippet: 'Walk through booking your first job.',
+        },
+      ]),
+    }),
+  );
+
+  const event = juju({
+    question: 'Is there a tag that blocks scheduling for a customer?',
+    truth_answer: 'Applying the Do Not Service tag prevents any future scheduling for a customer.',
+    truth_kind: 'human',
+    category: 'core-platform',
+  });
+
+  const result = await runCheck(event, index);
+
+  // Whatever the real top lexical hit is for this question (lexical_top[0]),
+  // it must still lead files_read; the Mintlify hit (first-job.mdx, which
+  // scores zero lexically) must still show up in the read set, but never
+  // ahead of the genuine top match.
+  assert.equal(result.evidence.files_read[0], result.evidence.lexical_top[0].path);
+  assert.notEqual(result.evidence.files_read[0], 'getting-started/first-job.mdx');
+  assert.ok(result.evidence.files_read.includes('getting-started/first-job.mdx'));
 });
 
 test('a callModel that throws ModelTimeout surfaces as CheckFailed with stage "model"', async () => {

@@ -30,6 +30,11 @@ function toRepoPath(pathForm) {
   return `${stripped}.mdx`;
 }
 
+// How far below the current max lexical score a Mintlify-only hit's
+// synthetic score sits -- small enough to still land the hit in the read
+// set, but never able to tie or outrank the real top lexical article.
+const MINTLIFY_SCORE_DISCOUNT = 0.01;
+
 function uniquePreservingOrder(values) {
   const seen = new Set();
   const out = [];
@@ -133,21 +138,25 @@ export function createRunCheck({
       mintlifyRawHits = await searchMintlify(event.question, { timeoutMs: mintlifyTimeoutMs });
 
       const currentMaxScore = lexicalHits.size > 0 ? Math.max(...[...lexicalHits.values()].map((h) => h.score)) : 0;
+      // Strictly below the current max, never at or above it: a Mintlify hit
+      // is a second opinion that should be guaranteed a seat in the read set,
+      // not a tiebreak winner that can bump the real top lexical article out
+      // of first place. Only fills in a path lexical search missed entirely
+      // -- it never raises an existing lexical hit's own score.
+      const mintlifySyntheticScore = Math.max(0, currentMaxScore - MINTLIFY_SCORE_DISCOUNT);
       const readCandidates = new Map(lexicalHits);
       for (const raw of mintlifyRawHits) {
         const repoPath = toRepoPath(normalizeHcUrl(raw.url, index.redirects));
         const doc = index.byPath.get(repoPath);
         if (!doc) continue;
-        const existing = readCandidates.get(repoPath);
-        if (!existing || currentMaxScore > existing.score) {
-          readCandidates.set(repoPath, {
-            path: repoPath,
-            score: currentMaxScore,
-            coverage: existing?.coverage ?? 0,
-            matched: existing?.matched ?? [],
-            hidden: doc.hidden,
-          });
-        }
+        if (readCandidates.has(repoPath)) continue;
+        readCandidates.set(repoPath, {
+          path: repoPath,
+          score: mintlifySyntheticScore,
+          coverage: 0,
+          matched: [],
+          hidden: doc.hidden,
+        });
       }
 
       // Step 4: read set. Cited paths present in the index always come
