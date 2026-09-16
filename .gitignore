@@ -3,4 +3,3 @@ node_modules/
 .env.local
 /tmp/
 .superpowers/
-results/*.json
