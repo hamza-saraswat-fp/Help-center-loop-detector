@@ -27,6 +27,12 @@ import { runWithTrace, getTrace } from './trace.js';
  * legacy `july_answer_text`/`july_category` names and the plain
  * `answer_text`/`category` ones for the same values; this accepts either,
  * preferring the `july_*` name when both are present.
+ *
+ * `cited_hc_urls` passes through `c.cited_hc_urls` (the help center article
+ * URLs Juju cited, from src/evalset.js's `toCaseRecord`) when it is an
+ * array, so calibration exercises the same cited-articles-forced-into-the-
+ * read-set path production runs; an empty array when absent or malformed
+ * matches what caseToEvent has always sent.
  * @param {object} c
  * @returns {object} GapEvent
  */
@@ -42,7 +48,7 @@ export function caseToEvent(c) {
     question: c.question,
     truth_answer: isControl ? answerText : null,
     truth_kind: isControl ? 'ai_verdict' : 'none',
-    cited_hc_urls: [],
+    cited_hc_urls: Array.isArray(c.cited_hc_urls) ? c.cited_hc_urls : [],
     closest_article_url: null,
     category: null,
     source_link: null,
@@ -154,9 +160,15 @@ function truncate(text, max) {
 /**
  * Render the calibration run as a markdown report: gate line first (the
  * line a reviewer actually needs), then the two cohort tables, a
- * per-quota-key breakdown of the gap cohort, and the two case lists that
- * matter for tuning a failing gate -- the control false positives and the
- * gap-cohort HIDDEN hits. No em dashes anywhere, per house style.
+ * per-quota-key breakdown of the gap cohort, and the case lists that
+ * matter for tuning a failing gate -- the control false positives (with a
+ * `first claim` column, the first entry of that case's `claims`, so a
+ * reviewer can see what the model thought it found without opening the
+ * JSON), a `Control cohort details` list for every control (verdict,
+ * target path, and how many of its cited article paths actually made it
+ * into the check's `files_read` -- the signal for whether the checker saw
+ * the article Juju's answer cited at all), and the gap-cohort HIDDEN hits.
+ * No em dashes anywhere, per house style.
  * @param {ReturnType<typeof summarize>} summary
  * @param {Array<object>} results the full per-case results (with `question`)
  * @param {{date:string, docsSha:string, model:string, promptVersion:string}} opts
@@ -222,11 +234,32 @@ export function renderReport(summary, results, { date, docsSha, model, promptVer
   if (controlFps.length === 0) {
     lines.push('None.');
   } else {
-    lines.push('| case_id | question | verdict | confidence | target path |');
-    lines.push('| --- | --- | --- | --- | --- |');
+    lines.push('| case_id | question | verdict | confidence | target path | first claim |');
+    lines.push('| --- | --- | --- | --- | --- | --- |');
     for (const r of controlFps) {
+      const firstClaim = Array.isArray(r.claims) ? r.claims[0] : null;
+      const firstClaimCell = firstClaim ? truncate(`${firstClaim.status}: ${firstClaim.claim}`, 100) : '';
       lines.push(
-        `| ${r.case_id} | ${truncate(r.question, 120)} | ${r.verdict} | ${r.confidence ?? ''} | ${r.target_article_path ?? ''} |`,
+        `| ${r.case_id} | ${truncate(r.question, 120)} | ${r.verdict} | ${r.confidence ?? ''} | ${r.target_article_path ?? ''} | ${firstClaimCell} |`,
+      );
+    }
+  }
+  lines.push('');
+  lines.push('## Control cohort details');
+  lines.push('');
+  const controls = results.filter((r) => r.cohort === 'control');
+  if (controls.length === 0) {
+    lines.push('None.');
+  } else {
+    lines.push('| case_id | verdict | target path | cited read |');
+    lines.push('| --- | --- | --- | --- |');
+    for (const r of controls) {
+      const citedPaths = Array.isArray(r.evidence?.cited_paths) ? r.evidence.cited_paths : [];
+      const filesRead = Array.isArray(r.evidence?.files_read) ? r.evidence.files_read : [];
+      const citedReadCount = citedPaths.filter((p) => filesRead.includes(p)).length;
+      const verdictCell = r.error ? 'ERROR' : (r.verdict ?? '');
+      lines.push(
+        `| ${r.case_id} | ${verdictCell} | ${r.target_article_path ?? ''} | cited read: ${citedReadCount}/${citedPaths.length} |`,
       );
     }
   }
@@ -254,6 +287,14 @@ export function renderReport(summary, results, { date, docsSha, model, promptVer
  * concurrently. A thrown CheckFailed (or anything else runCheck throws) is
  * caught into `error` rather than aborting the run -- one bad case should
  * not stop the other 99 from being scored.
+ *
+ * Each result carries, in addition to the scoring fields, the full text of
+ * the CheckResult (`question_paraphrase`, `truth_summary`, `says_now`,
+ * `should_say`, `proposed_change`, `claims`) plus a trimmed `evidence`
+ * (`files_read`, `cited_paths`, `closest_match`, `lexical_top`, `queries`)
+ * -- everything a reviewer needs to diagnose one verdict without rerunning
+ * the check. All null-safe: a `checkResult` of null (an errored case) yields
+ * null for every one of these fields.
  * @param {{cases: Array<object>, runCheck: Function, index: object,
  *   concurrency?: number, log?: (msg: string) => void}} opts
  * @returns {Promise<Array<object>>} results, one per case, in input order
@@ -293,6 +334,19 @@ export async function runCalibration({ cases, runCheck, index, concurrency = 3, 
       confidence: checkResult?.confidence ?? null,
       target_article_path: checkResult?.target_article_path ?? null,
       hidden_target: checkResult?.evidence?.hidden_target ?? false,
+      question_paraphrase: checkResult?.question_paraphrase ?? null,
+      truth_summary: checkResult?.truth_summary ?? null,
+      says_now: checkResult?.says_now ?? null,
+      should_say: checkResult?.should_say ?? null,
+      proposed_change: checkResult?.proposed_change ?? null,
+      claims: checkResult?.claims ?? null,
+      evidence: {
+        files_read: checkResult?.evidence?.files_read ?? null,
+        cited_paths: checkResult?.evidence?.cited_paths ?? null,
+        closest_match: checkResult?.evidence?.closest_match ?? null,
+        lexical_top: checkResult?.evidence?.lexical_top ?? null,
+        queries: checkResult?.evidence?.queries ?? null,
+      },
       error: errorMessage,
       cost_usd,
     };
