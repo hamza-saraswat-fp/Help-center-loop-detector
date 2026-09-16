@@ -1,7 +1,55 @@
 # Help Center Gap Detector
 
-Railway cron service that reconciles support/product signals against the FieldPulse help
-center and posts documentation gap candidates to Slack for review.
+A Railway cron service that reconciles support/product signals (Juju,
+Sidecar, and later Ava and the email agent) against the FieldPulse help
+center. It surfaces every real documentation gap it finds, from an article
+that's simply wrong to one that exists but is hidden from search, as a
+Slack card ready to ship. See `HC_LOOP_MANUAL.md` for what each verdict
+means, how priority is assigned, and how a card is routed once it's posted.
+
+## Run locally
+
+```sh
+cp .env.example .env
+# fill in .env: Supabase, OpenRouter, Slack, the docs repo URL
+npm install
+npm run migrate
+npm start -- --dry-run --source=juju --since=2026-07-01 --limit=5
+```
+
+`--dry-run` writes nothing to the database and posts nothing to Slack; it
+prints each event's verdict and evidence to the console. `npm run migrate`
+(`scripts/apply-migrations.sh`) needs a direct Postgres connection string in
+`DATABASE_URL`, separate from the `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`
+pair the running service itself uses.
+
+## Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--dry-run` | Writes nothing, posts nothing; results print to the console. Overrides `HC_LOOP_MODE`. |
+| `--source=<name>` | Restrict the run to one or more sources (repeatable, or comma-separated: `--source=juju,sidecar`). Default: every configured source. |
+| `--since=<ISO date>` | Only pull events at or after this timestamp, instead of each source's own watermark. |
+| `--limit=N` | Cap how many events are fetched per source and checked this run. |
+| `--skip-poll` | Skip polling Slack reactions and GitHub PRs for this run. |
+
+## Env ladders
+
+Two independent ladders, both degrading to their safest rung on an unset or
+unrecognized value rather than throwing. See `HC_LOOP_MANUAL.md`'s "Modes
+and env ladders" for the full explanation.
+
+| `HC_LOOP_MODE` | Writes | Posts |
+| --- | --- | --- |
+| `dry_run` (default) | Nothing | Nothing |
+| `shadow` | Everything (events, candidates, actions, `loop_runs`) | Shadow channel (`SLACK_SHADOW_CHANNEL_ID`), or nothing if it's unset |
+| `live` | Everything | The real gaps channel (`SLACK_GAPS_CHANNEL_ID`) |
+
+| `ONYX_MODE` | Behavior |
+| --- | --- |
+| `off` (default) | Onyx is never called |
+| `shadow` | Onyx is called and recorded, but never changes a verdict |
+| `live` | An Onyx hit can upgrade a verdict's corroboration |
 
 ## Docs clone
 
@@ -24,5 +72,44 @@ files (282 `hidden: true`), 1,452 redirects in `docs.json`, about 2 seconds on a
 connection.
 
 If `GITHUB_TOKEN` is set, it's injected into the clone URL as
-`https://x-access-token:<token>@github.com/...` and is never written to a log line — only
+`https://x-access-token:<token>@github.com/...` and is never written to a log line, only
 the plain `DOCS_REPO_URL` is logged.
+
+## Deploy
+
+The service runs on Railway as an hourly cron job, not a long-lived
+process:
+
+1. Connect this repo to a Railway service.
+2. Set every variable in `.env.example` in the Railway service's
+   environment (the required ones will fail the boot if missing; see
+   `src/config/env.js`).
+3. `railway.json` already sets `cronSchedule` (`0 * * * *`, hourly) and
+   `restartPolicyType: NEVER`, so Railway runs the service to completion
+   once an hour rather than restarting it in a loop.
+4. Two Slack channels matter: `SLACK_GAPS_CHANNEL_ID` (live candidate
+   cards, the real queue) and `SLACK_SHADOW_CHANNEL_ID` (shadow-mode cards,
+   for watching the loop before it goes live).
+
+Start in `HC_LOOP_MODE=shadow` for a week before switching to `live`. See
+`HC_LOOP_MANUAL.md`'s "Rollout" section.
+
+## Calibration
+
+Before `live` mode is allowed, `scripts/calibrate.js` has to pass: it
+dry-runs the real check over a 50-control-plus-50-gap evaluation set and
+requires the control false-positive rate (controls wrongly flagged as
+`MISSING` or `INCORRECT`) to stay at or under 10%.
+
+```sh
+npm run calibrate -- --set=path/to/gap-eval-set.json
+```
+
+It writes a dated report to `results/`. See `HC_LOOP_MANUAL.md`'s
+"Calibration gate" section for the full gate rules and flags.
+
+## More
+
+`HC_LOOP_MANUAL.md` is the source of truth for verdicts, priority rules,
+card format, routing, the status lifecycle, and how the check itself
+works. Read it before touching the `gap_check` prompt or the verdict code.
