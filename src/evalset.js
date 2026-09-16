@@ -240,7 +240,8 @@ export function selectCases(
  * channels, thread ts, or the trace -- see Global Constraints on PII in the
  * plan.
  * @param {{question: string, answer_text?: string|null,
- *   answer_confidence?: number|null, created_at?: string}} parent
+ *   answer_confidence?: number|null, created_at?: string,
+ *   mintlify_sources?: Array<{url?: string}|string>|null}} parent
  * @param {'control'|'gap'} cohort
  * @param {string} kind quota_key / july_category / category
  * @param {number} index 1-based, per cohort
@@ -262,6 +263,29 @@ export function scrubSlack(text) {
     .replace(/<(https?:\/\/[^>]+)>/g, '$1');
 }
 
+/**
+ * Pull the cited help center article URLs out of a parent's
+ * `mintlify_sources` (a `juju_feedback.mintlify_sources` JSON array of
+ * `{url, title}` objects -- or, defensively, bare url strings). Not Slack
+ * markup, so never run through scrubSlack. Skips any entry that isn't a
+ * string once extracted, dedupes, and keeps first-seen order.
+ * @param {Array<object|string>|null|undefined} sources
+ * @returns {string[]}
+ */
+export function citedHcUrlsFromSources(sources) {
+  if (!Array.isArray(sources)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const entry of sources) {
+    const url = typeof entry === 'string' ? entry : entry?.url;
+    if (typeof url !== 'string' || url === '') continue;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+  }
+  return out;
+}
+
 export function toCaseRecord(parent, cohort, kind, index) {
   const isControl = cohort === 'control';
   const prefix = isControl ? 'ctl' : 'gap';
@@ -279,6 +303,7 @@ export function toCaseRecord(parent, cohort, kind, index) {
     question: scrubSlack(parent.question),
     july_answer_text: answerText,
     answer_text: answerText,
+    cited_hc_urls: citedHcUrlsFromSources(parent.mintlify_sources),
     created_at: parent.created_at,
   };
 }

@@ -4,7 +4,15 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import { CANT_FIND_PATTERNS, readsAsCantFind, classifyParent, selectCases, toCaseRecord, scrubSlack } from '../src/evalset.js';
+import {
+  CANT_FIND_PATTERNS,
+  readsAsCantFind,
+  classifyParent,
+  selectCases,
+  toCaseRecord,
+  scrubSlack,
+  citedHcUrlsFromSources,
+} from '../src/evalset.js';
 
 // --- readsAsCantFind ---------------------------------------------------------
 
@@ -295,4 +303,65 @@ test('toCaseRecord scrubs Slack markup from question and answer text', () => {
   assert.equal(rec.question, '@someone is it?');
   assert.equal(rec.answer_text, 'yes @someone');
   assert.ok(!JSON.stringify(rec).includes('<@'));
+});
+
+// --- citedHcUrlsFromSources / cited_hc_urls ---------------------------------
+
+test('citedHcUrlsFromSources extracts url strings from an array of {url, title} objects', () => {
+  const sources = [
+    { url: 'https://fieldpulse.mintlify.app/billing/invoices', title: 'Invoices' },
+    { url: 'https://fieldpulse.mintlify.app/billing/refunds', title: 'Refunds' },
+  ];
+  assert.deepEqual(citedHcUrlsFromSources(sources), [
+    'https://fieldpulse.mintlify.app/billing/invoices',
+    'https://fieldpulse.mintlify.app/billing/refunds',
+  ]);
+});
+
+test('citedHcUrlsFromSources accepts bare url strings alongside objects', () => {
+  const sources = ['https://fieldpulse.mintlify.app/a', { url: 'https://fieldpulse.mintlify.app/b' }];
+  assert.deepEqual(citedHcUrlsFromSources(sources), [
+    'https://fieldpulse.mintlify.app/a',
+    'https://fieldpulse.mintlify.app/b',
+  ]);
+});
+
+test('citedHcUrlsFromSources skips entries whose url is missing or not a string, dedupes, and keeps order', () => {
+  const sources = [
+    { url: 'https://fieldpulse.mintlify.app/a' },
+    { title: 'no url here' },
+    { url: 42 },
+    null,
+    { url: 'https://fieldpulse.mintlify.app/a' },
+    { url: 'https://fieldpulse.mintlify.app/b' },
+  ];
+  assert.deepEqual(citedHcUrlsFromSources(sources), [
+    'https://fieldpulse.mintlify.app/a',
+    'https://fieldpulse.mintlify.app/b',
+  ]);
+});
+
+test('citedHcUrlsFromSources returns an empty array when sources is absent or not an array', () => {
+  assert.deepEqual(citedHcUrlsFromSources(undefined), []);
+  assert.deepEqual(citedHcUrlsFromSources(null), []);
+  assert.deepEqual(citedHcUrlsFromSources('not an array'), []);
+});
+
+test('toCaseRecord carries cited_hc_urls from parent.mintlify_sources, unscrubbed', () => {
+  const p = {
+    question: 'q',
+    answer_text: 'a',
+    created_at: 'x',
+    mintlify_sources: [
+      { url: 'https://fieldpulse.mintlify.app/billing/invoices', title: 'Invoices' },
+      { url: 'https://fieldpulse.mintlify.app/billing/invoices', title: 'dup' },
+    ],
+  };
+  const rec = toCaseRecord(p, 'control', 'answered_confirmed', 1);
+  assert.deepEqual(rec.cited_hc_urls, ['https://fieldpulse.mintlify.app/billing/invoices']);
+});
+
+test('toCaseRecord defaults cited_hc_urls to an empty array when mintlify_sources is absent', () => {
+  const rec = toCaseRecord({ question: 'q', answer_text: 'a', created_at: 'x' }, 'gap', 'cant_find', 1);
+  assert.deepEqual(rec.cited_hc_urls, []);
 });

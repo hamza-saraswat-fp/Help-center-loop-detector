@@ -133,6 +133,40 @@ test('caseToEvent gap case with only answer_text/category set has null truth_ans
   assert.equal(event.truth_kind, 'none');
 });
 
+test('caseToEvent passes through cited_hc_urls when it is an array', () => {
+  const c = {
+    case_id: 'ctl-004',
+    cohort: 'control',
+    quota_key: 'answered_confirmed',
+    category: 'answered_confirmed',
+    question: 'q',
+    answer_text: 'a',
+    cited_hc_urls: ['https://fieldpulse.mintlify.app/billing/invoices', 'https://fieldpulse.mintlify.app/billing/refunds'],
+  };
+
+  const event = caseToEvent(c);
+
+  assert.deepEqual(event.cited_hc_urls, [
+    'https://fieldpulse.mintlify.app/billing/invoices',
+    'https://fieldpulse.mintlify.app/billing/refunds',
+  ]);
+});
+
+test('caseToEvent defaults cited_hc_urls to [] when absent or not an array', () => {
+  const base = {
+    case_id: 'ctl-005',
+    cohort: 'control',
+    quota_key: 'answered_confirmed',
+    category: 'answered_confirmed',
+    question: 'q',
+    answer_text: 'a',
+  };
+
+  assert.deepEqual(caseToEvent(base).cited_hc_urls, []);
+  assert.deepEqual(caseToEvent({ ...base, cited_hc_urls: null }).cited_hc_urls, []);
+  assert.deepEqual(caseToEvent({ ...base, cited_hc_urls: 'not-an-array' }).cited_hc_urls, []);
+});
+
 test('caseToEvent falls back to now() for occurred_at when the case has no generated_at', () => {
   const before = Date.now();
   const event = caseToEvent({
@@ -272,10 +306,56 @@ test('renderReport contains the PASS line, both cohort tables, false-positive ro
   assert.match(report, /## Control cohort/);
   assert.match(report, /## Gap cohort/);
   assert.match(report, /## Control false positives/);
+  assert.match(report, /## Control cohort details/);
   assert.match(report, /## Gap cohort HIDDEN hits/);
   assert.match(report, /2026-09-16/);
   assert.match(report, /abc1234/);
   assert.doesNotMatch(report, /\u2014/);
+});
+
+test('renderReport Control cohort details lists every control with verdict, target path, and cited read count', () => {
+  const results = [
+    controlResult({
+      case_id: 'ctl-1',
+      verdict: 'CORRECT',
+      target_article_path: 'billing/invoices.mdx',
+      evidence: { cited_paths: ['billing/invoices.mdx', 'billing/refunds.mdx'], files_read: ['billing/invoices.mdx'] },
+    }),
+    controlResult({
+      case_id: 'ctl-2',
+      verdict: 'MISSING',
+      target_article_path: null,
+      evidence: { cited_paths: [], files_read: [] },
+    }),
+  ];
+  const summary = summarize(results);
+
+  const report = renderReport(summary, results, { date: '2026-09-16', docsSha: 'abc1234', model: 'm', promptVersion: 'v1' });
+
+  const detailsSection = report.split('## Control cohort details')[1].split('## Gap cohort HIDDEN hits')[0];
+  assert.match(detailsSection, /ctl-1 \| CORRECT \| billing\/invoices\.mdx \| cited read: 1\/2/);
+  assert.match(detailsSection, /ctl-2 \| MISSING \|  \| cited read: 0\/0/);
+});
+
+test('renderReport false-positive table includes a first claim column truncated to 100 chars', () => {
+  const results = [
+    controlResult({
+      case_id: 'ctl-1',
+      verdict: 'MISSING',
+      claims: [
+        { claim: 'x'.repeat(150), status: 'omitted', article_path: null, sentence: null },
+        { claim: 'second claim', status: 'supported', article_path: 'a.mdx', sentence: null },
+      ],
+    }),
+  ];
+  const summary = summarize(results);
+
+  const report = renderReport(summary, results, { date: '2026-09-16', docsSha: 'abc1234', model: 'm', promptVersion: 'v1' });
+
+  assert.match(report, /first claim/);
+  const fpLine = report.split('\n').find((l) => l.includes('ctl-1') && l.includes('omitted'));
+  assert.ok(fpLine, 'expected a false-positive row with the first claim');
+  assert.ok(!fpLine.includes('x'.repeat(150)), 'first claim cell must be truncated');
 });
 
 test('renderReport FAIL line and lists control false positives with case_id, verdict, confidence, target path', () => {
@@ -334,7 +414,27 @@ test('runCalibration returns one result per case in input order, capturing a Che
   ];
 
   const scripted = {
-    'ctl-1': { verdict: 'CORRECT', destination: 'help_center', priority: null, confidence: 90, target_article_path: null, evidence: { hidden_target: false } },
+    'ctl-1': {
+      verdict: 'CORRECT',
+      destination: 'help_center',
+      priority: null,
+      confidence: 90,
+      target_article_path: null,
+      question_paraphrase: 'paraphrased q1',
+      truth_summary: 'summary of truth',
+      says_now: 'the article currently says X',
+      should_say: 'it should say Y',
+      proposed_change: 'add a line about Y',
+      claims: [{ claim: 'invoices can be voided', status: 'supported', article_path: 'billing/invoices.mdx', sentence: 'Void it here.' }],
+      evidence: {
+        hidden_target: false,
+        files_read: ['billing/invoices.mdx'],
+        cited_paths: ['billing/invoices.mdx'],
+        closest_match: { path: 'billing/invoices.mdx', sentence: 'Void it here.' },
+        lexical_top: [{ path: 'billing/invoices.mdx', score: 3.2 }],
+        queries: [{ kind: 'question', terms: ['void', 'invoice'] }],
+      },
+    },
     'gap-1': new CheckFailed('model', new Error('timeout')),
     'ctl-2': { verdict: 'MISSING', destination: 'help_center', priority: 'p2', confidence: 40, target_article_path: 'a.mdx', evidence: { hidden_target: false } },
   };
@@ -352,9 +452,38 @@ test('runCalibration returns one result per case in input order, capturing a Che
 
   assert.equal(results[0].verdict, 'CORRECT');
   assert.equal(results[0].error, null);
+  assert.equal(results[0].question_paraphrase, 'paraphrased q1');
+  assert.equal(results[0].truth_summary, 'summary of truth');
+  assert.equal(results[0].says_now, 'the article currently says X');
+  assert.equal(results[0].should_say, 'it should say Y');
+  assert.equal(results[0].proposed_change, 'add a line about Y');
+  // The JSON record carries claims and evidence.files_read: the fields a
+  // reviewer needs to diagnose a verdict without rerunning the check.
+  assert.deepEqual(results[0].claims, [
+    { claim: 'invoices can be voided', status: 'supported', article_path: 'billing/invoices.mdx', sentence: 'Void it here.' },
+  ]);
+  assert.deepEqual(results[0].evidence.files_read, ['billing/invoices.mdx']);
+  assert.deepEqual(results[0].evidence.cited_paths, ['billing/invoices.mdx']);
+  assert.deepEqual(results[0].evidence.closest_match, { path: 'billing/invoices.mdx', sentence: 'Void it here.' });
+  assert.deepEqual(results[0].evidence.lexical_top, [{ path: 'billing/invoices.mdx', score: 3.2 }]);
+  assert.deepEqual(results[0].evidence.queries, [{ kind: 'question', terms: ['void', 'invoice'] }]);
 
+  // An errored case (no CheckResult at all) is null-safe across every new field.
   assert.equal(results[1].verdict, null);
   assert.match(results[1].error, /timeout/);
+  assert.equal(results[1].question_paraphrase, null);
+  assert.equal(results[1].truth_summary, null);
+  assert.equal(results[1].says_now, null);
+  assert.equal(results[1].should_say, null);
+  assert.equal(results[1].proposed_change, null);
+  assert.equal(results[1].claims, null);
+  assert.deepEqual(results[1].evidence, {
+    files_read: null,
+    cited_paths: null,
+    closest_match: null,
+    lexical_top: null,
+    queries: null,
+  });
 
   assert.equal(results[2].verdict, 'MISSING');
   assert.equal(results[2].target_article_path, 'a.mdx');
