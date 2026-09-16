@@ -1419,3 +1419,81 @@ test('repairing a candidate that already has a posted action restores slack_ts a
   assert.equal(candidate.slack_ts, '1726480000.000100', 'the reactions poller can never see this candidate');
   assert.equal(candidate.slack_channel, 'C-GAPS');
 });
+
+// --- final review: I8, a failed merge must not null the priority ------------
+
+test('a near-duplicate whose merge fails keeps a real priority and still replies', async () => {
+  const row = JUJU_ROWS[1];
+  const fp = fingerprintFor(row, 'juju');
+  const { run, repos, poster } = harness({
+    rows: { juju: [row] },
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          // A different hash, the same terms: findByFingerprint misses and
+          // findNearDuplicate is what matches, so `existing` is the narrow
+          // projection rather than a full row.
+          fingerprint: 'fp-reworded',
+          fingerprint_terms: fp.terms,
+          category: fp.category,
+          destination: 'help_center',
+          verdict: 'MISSING',
+          priority: 'P1',
+          status: 'posted',
+          slack_channel: 'C-GAPS',
+          slack_ts: 'ts-old',
+          question_paraphrase: 'Can jobs be bulk-reassigned?',
+          needs_answer: false,
+          event_count: 1,
+          first_seen: '2026-09-01T00:00:00.000Z',
+          last_seen: '2026-09-01T00:00:00.000Z',
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+  repos.failNext('mergeEventIntoCandidate');
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.duplicates, 1);
+  const candidate = repos.state.candidates[0];
+  assert.ok(candidate.priority, 'the failed merge nulled a real priority');
+  assert.equal(poster.replies.length, 1, 'the thread reply still went to the original card');
+  assert.equal(poster.replies[0].threadTs, 'ts-old');
+});
+
+test('a near-duplicate with no verdict yet leaves its priority alone', async () => {
+  const row = JUJU_ROWS[1];
+  const fp = fingerprintFor(row, 'juju');
+  const { run, repos } = harness({
+    rows: { juju: [row] },
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-reworded',
+          fingerprint_terms: fp.terms,
+          category: fp.category,
+          destination: 'none',
+          verdict: null,
+          priority: 'P2',
+          status: 'logged',
+          slack_ts: null,
+          slack_channel: null,
+          question_paraphrase: '[question] data lookup',
+          needs_answer: false,
+          event_count: 1,
+          first_seen: '2026-09-01T00:00:00.000Z',
+          last_seen: '2026-09-01T00:00:00.000Z',
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+
+  await run(args());
+
+  assert.equal(repos.state.candidates[0].priority, 'P2');
+});

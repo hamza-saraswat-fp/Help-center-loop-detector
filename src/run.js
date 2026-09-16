@@ -385,13 +385,17 @@ export function createRun({
           // has been seen, so it is recomputed over the whole linked
           // history every time one more event lands on it.
           const linked = await candidates.linkedEvents(existing.id);
-          const priority = computePriority({
-            verdict: merged.verdict ?? existing.verdict,
-            events: linked,
-            now: startedAt,
-          });
-          if (priority !== (merged.priority ?? null)) {
-            await candidates.updateCandidate(existing.id, { priority });
+          // Only when a verdict is actually known. `merged` falls back to
+          // `existing` when the merge failed, and a candidate that has not
+          // been checked yet has no verdict at all -- in both cases
+          // computePriority would return null, and writing that null would
+          // wipe a real priority off the row.
+          const verdict = merged.verdict ?? existing.verdict ?? null;
+          if (verdict) {
+            const priority = computePriority({ verdict, events: linked, now: startedAt });
+            if (priority !== (merged.priority ?? null)) {
+              await candidates.updateCandidate(existing.id, { priority });
+            }
           }
 
           // `existing` may be a near-duplicate row, which carries no

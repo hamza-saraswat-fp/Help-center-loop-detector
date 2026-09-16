@@ -239,6 +239,43 @@ test('findNearDuplicate: computes jaccard in JS and respects the threshold', asy
   assert.equal(result.id, 1);
 });
 
+// --- final review: I8, the near-duplicate projection ------------------------
+// `existing` from this query is what run.js's duplicate path falls back to
+// when `mergeEventIntoCandidate` fails, and it reads verdict, slack_ts and
+// slack_channel off it. A narrow projection made those undefined.
+test('findNearDuplicate: projects the columns the duplicate path reads', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_candidates.select': {
+      data: [{ id: 1, fingerprint_terms: ['add', 'team', 'member'], last_seen: '2026-09-10T00:00:00.000Z' }],
+      error: null,
+    },
+  });
+  const candidates = createCandidatesRepo({ client, now });
+
+  await candidates.findNearDuplicate('team', ['add', 'team', 'member']);
+
+  const projection = calls[0].select;
+  for (const column of [
+    'id',
+    'fingerprint_terms',
+    'status',
+    'last_seen',
+    'event_count',
+    'priority',
+    'needs_answer',
+    'verdict',
+    'slack_ts',
+    'slack_channel',
+    'category',
+    'question_paraphrase',
+  ]) {
+    assert.ok(
+      projection.split(',').map((c) => c.trim()).includes(column),
+      `${column} missing from the near-duplicate projection`,
+    );
+  }
+});
+
 test('findNearDuplicate: below threshold returns null', async () => {
   const { client } = fakeSupabase({
     'gap_candidates.select': {

@@ -171,6 +171,22 @@ export function fakeSupabase(script = {}) {
  * `recordAction` are the two wired up; `failures` is left open for more.
  * @param {{now?: () => Date, seed?: {events?: object[], candidates?: object[], runs?: object[]}}} [opts]
  */
+// Mirrors the `select(...)` in src/db/candidates.js's findNearDuplicate.
+const NEAR_DUPLICATE_COLUMNS = [
+  'id',
+  'fingerprint_terms',
+  'status',
+  'last_seen',
+  'event_count',
+  'priority',
+  'needs_answer',
+  'verdict',
+  'slack_ts',
+  'slack_channel',
+  'category',
+  'question_paraphrase',
+];
+
 export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
   const failures = new Map();
 
@@ -280,7 +296,13 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
         best = row;
         bestScore = score;
       }
-      return best;
+      // The same projection the real repo selects, not the whole row: a
+      // caller that reads a column this query does not fetch should see it
+      // missing here too.
+      if (!best) return null;
+      return Object.fromEntries(
+        NEAR_DUPLICATE_COLUMNS.filter((column) => column in best).map((column) => [column, best[column]]),
+      );
     },
     async insertCandidate(row) {
       if (scriptedToFail('insertCandidate')) return null;
@@ -300,6 +322,7 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       return { ...candidate };
     },
     async mergeEventIntoCandidate(candidate, event) {
+      if (scriptedToFail('mergeEventIntoCandidate')) return null;
       const row = byId(state.candidates, candidate.id);
       if (!row) return null;
       row.event_count = (candidate.event_count ?? row.event_count ?? 1) + 1;
