@@ -325,6 +325,7 @@ test('pollPrs: a duplicate pr_opened (recordAction returns null) leaves the stat
     actions: repos.actions,
   });
 
+  assert.deepEqual(repos.pendingFailures(), [], 'the scripted recordAction failure was never reached');
   assert.equal(result.pr_open, 0);
   assert.equal(repos.state.candidates[0].status, 'posted', 'status moved on a duplicate action');
   assert.equal(repos.state.actions.length, 0);
@@ -353,6 +354,7 @@ test('pollPrs: a duplicate merged action leaves the status alone', async () => {
     actions: repos.actions,
   });
 
+  assert.deepEqual(repos.pendingFailures(), [], 'the scripted recordAction failure was never reached');
   assert.equal(result.merged, 0);
   assert.equal(repos.state.candidates[0].status, 'pr_open');
 });

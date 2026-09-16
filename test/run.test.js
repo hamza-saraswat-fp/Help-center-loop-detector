@@ -1546,3 +1546,83 @@ test('onyxMode off leaves the truth kind alone even with onyx hits present', asy
   assert.equal(candidate.truth_kind, 'none');
   assert.equal(candidate.needs_answer, true);
 });
+
+// --- round 2: a failed re-check update spends the check budget too ----------
+
+function recheckHarness() {
+  const answered = {
+    ...JUJU_ROWS[0],
+    truth_answer: 'Convert copies the estimate total; edits after the convert are not synced.',
+    truth_kind: 'human',
+    needs_answer: false,
+    pinged_at: null,
+  };
+  return harness({
+    rows: { juju: [answered] },
+    script: { default: checkResult({ verdict: 'MISSING' }) },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'juju',
+          source_event_id: '5001',
+          occurred_at: JUJU_ROWS[0].occurred_at,
+          question: JUJU_ROWS[0].question,
+          truth_kind: 'none',
+          detail: {},
+          processed_at: null,
+          outcome: null,
+          candidate_id: 1,
+        },
+      ],
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-original',
+          fingerprint_terms: ['invoice'],
+          category: 'using-fieldpulse',
+          destination: 'help_center',
+          verdict: 'UNFINDABLE',
+          priority: null,
+          status: 'logged',
+          truth_kind: 'none',
+          needs_answer: true,
+          question_paraphrase: 'Why does the invoice total differ?',
+          event_count: 1,
+          first_seen: '2026-09-10T14:22:00.000Z',
+          last_seen: '2026-09-10T14:22:00.000Z',
+          created_at: '2026-09-10T14:22:00.000Z',
+        },
+      ],
+    },
+  });
+}
+
+test('a failed re-check update bumps the check attempts instead of re-checking forever', async () => {
+  const { run, repos, runCheck } = recheckHarness();
+  repos.failNext('updateCandidate');
+
+  await run(args());
+
+  assert.deepEqual(repos.pendingFailures(), [], 'the scripted updateCandidate failure was never reached');
+  assert.deepEqual(runCheck.seen, ['5001']);
+  const event = repos.state.events[0];
+  assert.equal(event.processed_at, null, 'the event is still pending a retry');
+  assert.equal(event.detail._check_attempts, 1);
+  assert.equal(repos.state.candidates[0].verdict, 'UNFINDABLE', 'nothing was written');
+});
+
+test('three failed re-check updates mark the event check_failed and stop the spend', async () => {
+  const { run, repos } = recheckHarness();
+  repos.failNext('updateCandidate', 3);
+
+  await run(args());
+  await run(args());
+  await run(args());
+
+  assert.deepEqual(repos.pendingFailures(), []);
+  const event = repos.state.events[0];
+  assert.equal(event.detail._check_attempts, 3);
+  assert.equal(event.outcome, 'check_failed');
+  assert.ok(event.processed_at, 'the event is closed out rather than re-checked next run');
+});

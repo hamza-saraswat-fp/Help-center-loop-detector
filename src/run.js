@@ -317,6 +317,19 @@ export function createRun({
       // itself: the same question twice in one pull is still only one gap.
       const seenFingerprints = new Set();
 
+      // A write that failed leaves the event unprocessed, so it comes back next
+      // run and buys another model call. Three of those and the loop gives up
+      // on it, exactly as it does on a failing check: a NOT NULL or CHECK
+      // violation in this row is not going to start working, and an hourly
+      // model call for it is pure spend.
+      async function spendCheckAttempt(event, label, what) {
+        const attempts = await events.bumpCheckAttempts(event.id);
+        if (attempts >= MAX_CHECK_ATTEMPTS) {
+          log(LANE, `giving up on ${label} after ${attempts} ${what}`);
+          await events.markProcessed(event.id, 'check_failed');
+        }
+      }
+
       // One event, start to finish. Split out so the loop below can put a
       // single guard around it.
       async function processEvent(event, label) {
@@ -533,6 +546,7 @@ export function createRun({
           const updated = await candidates.updateCandidate(recheckCandidateId, patch);
           if (!updated) {
             logError(LANE, `could not update candidate #${recheckCandidateId}; leaving ${label} unprocessed`);
+            await spendCheckAttempt(event, label, 'failed candidate updates');
             return;
           }
           await events.markProcessed(event.id, 'candidate', { candidateId: recheckCandidateId });
@@ -572,15 +586,7 @@ export function createRun({
 
         if (!candidate) {
           logError(LANE, `could not record a candidate for ${label}; leaving the event unprocessed`);
-          // The same three-strike budget the CheckFailed path applies. An
-          // unprocessed event comes back next run and buys another model call,
-          // so a write that will never succeed (a NOT NULL or CHECK violation
-          // in this row) would otherwise cost one call an hour, forever.
-          const attempts = await events.bumpCheckAttempts(event.id);
-          if (attempts >= MAX_CHECK_ATTEMPTS) {
-            log(LANE, `giving up on ${label} after ${attempts} failed candidate writes`);
-            await events.markProcessed(event.id, 'check_failed');
-          }
+          await spendCheckAttempt(event, label, 'failed candidate writes');
           return;
         }
 

@@ -168,7 +168,9 @@ export function fakeSupabase(script = {}) {
  * and prs.js's `if (!row) continue` -- are only reachable if the fakes can
  * fail too, so `failNext(method, times = 1)` scripts the next `times` calls of
  * `method` to return null without writing anything. `insertCandidate`,
- * `recordAction` and `mergeEventIntoCandidate` are the ones wired up.
+ * `recordAction`, `mergeEventIntoCandidate` and `updateCandidate` are the ones
+ * wired up. `pendingFailures()` returns the scripted failures that were never
+ * consumed, so a test can prove the path it meant to exercise was reached.
  * @param {{now?: () => Date, seed?: {events?: object[], candidates?: object[], runs?: object[]}}} [opts]
  */
 // Mirrors the `select(...)` in src/db/candidates.js's findNearDuplicate.
@@ -201,6 +203,11 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
     if (remaining <= 0) return false;
     failures.set(method, remaining - 1);
     return true;
+  }
+
+  /** The scripted failures nothing ever consumed, as `[method, count]` pairs. */
+  function pendingFailures() {
+    return [...failures.entries()].filter(([, count]) => count > 0);
   }
 
   const state = {
@@ -337,6 +344,7 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       return true;
     },
     async updateCandidate(id, patch) {
+      if (scriptedToFail('updateCandidate')) return null;
       const row = byId(state.candidates, id);
       if (!row) return null;
       Object.assign(row, patch, { updated_at: now().toISOString() });
@@ -405,5 +413,5 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
     },
   };
 
-  return { state, events, candidates, actions, runs, failNext };
+  return { state, events, candidates, actions, runs, failNext, pendingFailures };
 }
