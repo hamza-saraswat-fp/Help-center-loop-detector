@@ -12,14 +12,23 @@ import { redactSecrets } from './util/redact.js';
 // A stray rejection in a settle-adjacent path would otherwise kill the
 // process with Node's own warning and no `[lane]` line, which is the one
 // thing a Railway log reader greps for. Both handlers record the failure and
-// mark the run failed; neither re-throws.
+// mark the run failed.
 function fatal(what, reason) {
   error('index', `${what}: ${redactSecrets(String(reason?.stack ?? reason?.message ?? reason))}`);
   process.exitCode = 1;
 }
 
 process.on('unhandledRejection', (reason) => fatal('unhandled rejection', reason));
-process.on('uncaughtException', (err) => fatal('uncaught exception', err));
+
+// An uncaught exception ends the process too. Without the explicit exit, a
+// throw from outside the promise chain would leave the handler having only
+// logged: the chain's `.finally` is never reached, and the cron process (and
+// the loop_runs row it opened) stays alive until Railway's timeout. stdout and
+// stderr are blocking, so the line above is already written.
+process.on('uncaughtException', (err) => {
+  fatal('uncaught exception', err);
+  process.exit(1);
+});
 
 // A bad flag is an operator typo, not a crash: one `[index]` line naming the
 // flag, before run() opens anything.
