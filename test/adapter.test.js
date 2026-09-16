@@ -189,3 +189,12 @@ test('normalizeEvent never overwrites an existing detail.team', () => {
   const event = normalizeEvent(row, 'sidecar');
   assert.equal(event.detail.team, 'chat_assist');
 });
+
+import { stripSslMode } from '../src/sources/pg.js';
+
+test('stripSslMode removes sslmode from a connection string and leaves the rest intact', () => {
+  assert.equal(stripSslMode('postgresql://u:p@h:5432/db?sslmode=require'), 'postgresql://u:p@h:5432/db');
+  assert.equal(stripSslMode('postgresql://u:p@h:5432/db?sslmode=require&application_name=x'), 'postgresql://u:p@h:5432/db?application_name=x');
+  assert.equal(stripSslMode('postgresql://u:p@h:5432/db?application_name=x&sslmode=verify-full'), 'postgresql://u:p@h:5432/db?application_name=x');
+  assert.equal(stripSslMode('postgresql://u:p@h:5432/db'), 'postgresql://u:p@h:5432/db');
+});
