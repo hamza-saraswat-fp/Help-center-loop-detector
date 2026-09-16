@@ -78,6 +78,61 @@ test('caseToEvent maps a gap case: truth_answer null, truth_kind none, needs_ans
   });
 });
 
+test('caseToEvent accepts answer_text and category when july_answer_text/july_category are absent', () => {
+  const c = {
+    case_id: 'ctl-002',
+    cohort: 'control',
+    quota_key: 'answered_confirmed',
+    category: 'answered_confirmed',
+    question: 'How do I refund a deposit?',
+    july_confidence: 0.9,
+    answer_text: 'From the invoice, click Refund.',
+    created_at: '2026-09-10T00:00:00.000Z',
+  };
+
+  const event = caseToEvent(c);
+
+  assert.equal(event.kind, 'answered_confirmed');
+  assert.equal(event.truth_answer, 'From the invoice, click Refund.');
+  assert.equal(event.truth_kind, 'ai_verdict');
+});
+
+test('caseToEvent prefers july_answer_text/july_category over answer_text/category when both are present', () => {
+  const c = {
+    case_id: 'ctl-003',
+    cohort: 'control',
+    quota_key: 'answered',
+    july_category: 'legacy_kind',
+    category: 'new_kind',
+    question: 'q',
+    july_confidence: 0.5,
+    july_answer_text: 'legacy answer',
+    answer_text: 'new answer',
+  };
+
+  const event = caseToEvent(c);
+
+  assert.equal(event.kind, 'legacy_kind');
+  assert.equal(event.truth_answer, 'legacy answer');
+});
+
+test('caseToEvent gap case with only answer_text/category set has null truth_answer (gap truth is never used)', () => {
+  const c = {
+    case_id: 'gap-002',
+    cohort: 'gap',
+    quota_key: 'gap_cant_find',
+    category: 'gap_cant_find',
+    question: 'q',
+    answer_text: 'I could not find anything about this.',
+  };
+
+  const event = caseToEvent(c);
+
+  assert.equal(event.kind, 'gap_cant_find');
+  assert.equal(event.truth_answer, null);
+  assert.equal(event.truth_kind, 'none');
+});
+
 test('caseToEvent falls back to now() for occurred_at when the case has no generated_at', () => {
   const before = Date.now();
   const event = caseToEvent({

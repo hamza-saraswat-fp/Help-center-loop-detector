@@ -22,18 +22,25 @@ import { runWithTrace, getTrace } from './trace.js';
  * time, so a run against the same set is reproducible; individual cases in
  * the source file don't carry their own `generated_at`, so in practice this
  * falls back to `now()` unless the caller sets it.
+ *
+ * Field names: the fresh eval-set builder (src/evalset.js) writes both the
+ * legacy `july_answer_text`/`july_category` names and the plain
+ * `answer_text`/`category` ones for the same values; this accepts either,
+ * preferring the `july_*` name when both are present.
  * @param {object} c
  * @returns {object} GapEvent
  */
 export function caseToEvent(c) {
   const isControl = c.cohort === 'control';
+  const category = c.july_category ?? c.category;
+  const answerText = c.july_answer_text ?? c.answer_text;
   return {
     source: 'juju',
     source_event_id: c.case_id,
-    kind: c.july_category,
+    kind: category,
     occurred_at: c.generated_at ?? new Date().toISOString(),
     question: c.question,
-    truth_answer: isControl ? c.july_answer_text : null,
+    truth_answer: isControl ? answerText : null,
     truth_kind: isControl ? 'ai_verdict' : 'none',
     cited_hc_urls: [],
     closest_article_url: null,

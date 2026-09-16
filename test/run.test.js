@@ -218,6 +218,35 @@ test('dry_run writes nothing, posts nothing, and returns the results in stats', 
   assert.equal(sourceReader.closed, 1);
 });
 
+test('dry_run result line carries team= when the event has a Sidecar team', async (t) => {
+  const logSpy = t.mock.method(console, 'log');
+  const sidecarRow = { ...SIDECAR_ROWS[0], source: 'chat_assist' };
+  const { run } = harness({ rows: { sidecar: [sidecarRow] } });
+
+  const { stats } = await run(args({ dryRun: true }));
+
+  assert.equal(stats.results.length, 1);
+  const lines = logSpy.mock.calls.map((call) => call.arguments[0]);
+  assert.ok(
+    lines.some((line) => typeof line === 'string' && line.includes('dry-run result:') && line.includes('team=chat_assist')),
+    `expected a dry-run result line with team=chat_assist, got: ${JSON.stringify(lines)}`,
+  );
+});
+
+test('dry_run result line has no team= segment for Juju', async (t) => {
+  const logSpy = t.mock.method(console, 'log');
+  const { run } = harness({ rows: { juju: [JUJU_ROWS[1]] } });
+
+  const { stats } = await run(args({ dryRun: true }));
+
+  assert.equal(stats.results.length, 1);
+  const resultLine = logSpy.mock.calls
+    .map((call) => call.arguments[0])
+    .find((line) => typeof line === 'string' && line.includes('dry-run result:'));
+  assert.ok(resultLine);
+  assert.doesNotMatch(resultLine, /team=/);
+});
+
 test('dry_run dedups in memory by fingerprint hash and checks each gap once', async () => {
   const { run, runCheck } = harness({ rows: { juju: [JUJU_ROWS[1], { ...JUJU_ROWS[1], event_id: 9999 }] } });
 

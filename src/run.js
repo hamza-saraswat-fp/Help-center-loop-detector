@@ -494,11 +494,12 @@ export function createRun({
 
         if (dryRun) {
           stats.results.push(result);
+          const team = event.detail?.team;
           log(
             LANE,
             `dry-run result: ${label} verdict=${result.verdict} destination=${result.destination} ` +
               `priority=${priority} target=${result.target_article_path} confidence=${result.confidence} ` +
-              `"${result.question_paraphrase}"`,
+              `${team ? `team=${team} ` : ''}"${result.question_paraphrase}"`,
           );
           return;
         }

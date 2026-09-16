@@ -152,7 +152,27 @@ export function normalizeEvent(row, source) {
     needs_answer = truth_kind === 'none';
   }
 
-  const detail = 'detail' in row ? parseDetail(row.detail) : {};
+  let detail = 'detail' in row ? parseDetail(row.detail) : {};
+
+  // Sidecar's view puts the team (chat_assist/all/ai) in its own `source`
+  // column, since Sidecar has one view per team rather than one per tool.
+  // When that differs from the caller's own source id, keep it as
+  // detail.team so the card can show which team a gap came from -- never
+  // overwriting a team the row's own detail jsonb already carried (a
+  // re-pull of an already-classified row). Juju's row.source is always
+  // 'juju', matching the source argument, so nothing changes for it.
+  // A copy, not a mutation: `parseDetail` can hand back the caller's own
+  // object verbatim (the 'typeof value === object' branch), and writing
+  // into it in place would leak the team onto a row this function does not
+  // own.
+  if (
+    typeof row.source === 'string' &&
+    row.source !== '' &&
+    row.source !== source &&
+    detail.team === undefined
+  ) {
+    detail = { ...detail, team: row.source };
+  }
 
   return {
     source: source !== undefined && source !== null ? source : row.source,
