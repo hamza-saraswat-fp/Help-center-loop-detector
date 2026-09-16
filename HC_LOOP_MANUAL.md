@@ -170,7 +170,7 @@ Evan approved the exhaustive-search approach specifically because two
 things turned out to be true about the help center's own repo,
 `Flicent/fieldpulse-help-docs`, that no live tool can see around:
 
-- **281 of 787 articles are marked `hidden: true`.** They're live at real,
+- **282 of 787 articles are marked `hidden: true`.** They're live at real,
   working public URLs, but they're absent from the search index, from
   `llms.txt`, from `_llms/home.md`, and even from the Mintlify MCP's own
   virtual filesystem (asking it to list `/` doesn't show `unparented/`).
