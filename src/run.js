@@ -232,6 +232,19 @@ export function createRun({
       }
       log(LANE, `docs sha=${docs.sha} articles=${index.byPath.size}`);
 
+      // Onyx can promote an unverified answer to a corroborated one, but only
+      // on the ladder's top rung -- in `shadow` it is observed and recorded,
+      // never acted on. Resolved once per run rather than once per event: a
+      // dynamic import inside the per-event loop would land a module
+      // resolution failure in the generic per-event catch and silently drop
+      // the event. It is not a top-of-file import because src/onyx.js builds
+      // its default client from the env singleton at import time, and
+      // importing src/run.js must never touch src/config/env.js.
+      let upgradedTruthKind = (truthKind) => truthKind;
+      if (env.onyxMode === 'live') {
+        ({ upgradedTruthKind } = await import('./onyx.js'));
+      }
+
       // Null means Mintlify is unavailable this run; `search` then returns []
       // and the check runs on the local lexical index alone.
       await mintlify.connect();
@@ -454,15 +467,11 @@ export function createRun({
         const status =
           result.destination !== 'help_center' || LOGGED_VERDICTS.has(result.verdict) ? 'logged' : 'new';
 
-        // Onyx can promote an unverified answer to a corroborated one, but
-        // only on the ladder's top rung -- in `shadow` it is observed and
-        // recorded, never acted on. Imported here rather than at the top of
-        // the file because src/onyx.js builds its default client from the
-        // env singleton at import time.
+        // `upgradedTruthKind` is the identity function unless ONYX_MODE is
+        // `live` (resolved once at the top of the run).
         let truthKind = event.truth_kind;
         const onyxHits = result.evidence?.onyx?.hits;
-        if (env.onyxMode === 'live' && Array.isArray(onyxHits) && onyxHits.length > 0) {
-          const { upgradedTruthKind } = await import('./onyx.js');
+        if (Array.isArray(onyxHits) && onyxHits.length > 0) {
           truthKind = upgradedTruthKind(truthKind, onyxHits);
         }
 

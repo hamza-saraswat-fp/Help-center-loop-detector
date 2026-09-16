@@ -1497,3 +1497,52 @@ test('a near-duplicate with no verdict yet leaves its priority alone', async () 
 
   assert.equal(repos.state.candidates[0].priority, 'P2');
 });
+
+// --- final review: I9, the ONYX_MODE=live upgrade path ---------------------
+
+test('onyxMode live upgrades an unanswered event to onyx_verified', async () => {
+  const { run, repos } = harness({
+    env: { onyxMode: 'live' },
+    rows: { juju: [JUJU_ROWS[2]] },
+    script: {
+      default: checkResult({
+        verdict: 'MISSING',
+        evidence: {
+          ...checkResult().evidence,
+          onyx: {
+            mode: 'live',
+            hits: [{ doc_set: 'verified_qa', title: 'Tax rates', link: 'https://onyx.example/1' }],
+          },
+        },
+      }),
+    },
+  });
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.candidates_new, 1);
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.truth_kind, 'onyx_verified', 'a verified_qa hit did not upgrade the truth kind');
+  assert.equal(candidate.needs_answer, false, 'a corroborated answer must not ping an owner');
+});
+
+test('onyxMode off leaves the truth kind alone even with onyx hits present', async () => {
+  const { run, repos } = harness({
+    rows: { juju: [JUJU_ROWS[2]] },
+    script: {
+      default: checkResult({
+        verdict: 'MISSING',
+        evidence: {
+          ...checkResult().evidence,
+          onyx: { mode: 'shadow', hits: [{ doc_set: 'verified_qa', title: 'Tax rates' }] },
+        },
+      }),
+    },
+  });
+
+  await run(args());
+
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.truth_kind, 'none');
+  assert.equal(candidate.needs_answer, true);
+});
