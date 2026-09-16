@@ -88,9 +88,10 @@ process:
 2. Set every variable in `.env.example` in the Railway service's
    environment (the required ones will fail the boot if missing; see
    `src/config/env.js`).
-3. `railway.json` already sets `cronSchedule` (`0 * * * *`, hourly) and
-   `restartPolicyType: NEVER`, so Railway runs the service to completion
-   once an hour rather than restarting it in a loop.
+3. On the service itself, set Cron Schedule to `0 * * * *` and Restart
+   Policy to Never, so Railway runs the service to completion once an hour
+   rather than restarting it in a loop. (Railway ignores `railway.json` for
+   this service; see the section above.)
 4. Two Slack channels matter: `SLACK_GAPS_CHANNEL_ID` (live candidate
    cards, the real queue) and `SLACK_SHADOW_CHANNEL_ID` (shadow-mode cards,
    for watching the loop before it goes live).

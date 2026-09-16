@@ -324,10 +324,9 @@ something the loop protects itself against automatically.
 
 ## Operating
 
-- **Schedule**: Railway runs the service on an hourly cron
-  (`railway.json`'s `cronSchedule`, currently `0 * * * *`), with
-  `restartPolicyType: NEVER` since a cron job that restarts itself on exit
-  would just run twice.
+- **Schedule**: Railway runs the service on an hourly cron (`0 * * * *`,
+  set on the service in Railway, not in the repo), with restart policy Never,
+  since a cron job that restarts itself on exit would just run twice.
 - **The run ledger**: every non-dry-run run writes one row to `loop_runs`,
   started/finished timestamps, mode, the docs repo's commit sha, event and
   candidate counts by lane, and an `errors` array of anything that went
