@@ -1,0 +1,14 @@
+{
+  "_note": "Owner IDs copied from Juju's owner mapping (dashboard/config), pending confirmation with Evan.",
+  "by_category": {
+    "using-fieldpulse": ["U060UTZ220M", "U036Y4VSSNA"],
+    "features-add-ons": ["U08KR30Q6H3", "U0ABMMCQ7U3", "U060UTZ220M"],
+    "integrations-partners": ["U099JQU52H5", "U060UTZ220M", "U08KR30Q6H3"],
+    "getting-started": ["U060UTZ220M", "U036Y4VSSNA"],
+    "training-resources": ["U0ABMMCQ7U3"],
+    "offline-mode": ["U060UTZ220M", "U036Y4VSSNA"],
+    "troubleshooting-technical-specs": ["U060UTZ220M", "U036Y4VSSNA"],
+    "general": ["U0ABMMCQ7U3"]
+  },
+  "general": ["U0ABMMCQ7U3"]
+}
