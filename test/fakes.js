@@ -167,8 +167,8 @@ export function fakeSupabase(script = {}) {
  * that handle that -- run.js's "could not record a candidate", reactions.js's
  * and prs.js's `if (!row) continue` -- are only reachable if the fakes can
  * fail too, so `failNext(method, times = 1)` scripts the next `times` calls of
- * `method` to return null without writing anything. `insertCandidate` and
- * `recordAction` are the two wired up; `failures` is left open for more.
+ * `method` to return null without writing anything. `insertCandidate`,
+ * `recordAction` and `mergeEventIntoCandidate` are the ones wired up.
  * @param {{now?: () => Date, seed?: {events?: object[], candidates?: object[], runs?: object[]}}} [opts]
  */
 // Mirrors the `select(...)` in src/db/candidates.js's findNearDuplicate.
