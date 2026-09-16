@@ -1,0 +1,170 @@
+{
+  "generated_at": "2026-08-05T16:17:58.346Z",
+  "source_audit": "results/audit-2026-07/05-final.json",
+  "control_take": 6,
+  "gap_quotas": [
+    {
+      "key": "gap_cant_find",
+      "take": 1
+    },
+    {
+      "key": "escalated",
+      "take": 1
+    },
+    {
+      "key": "escalated",
+      "take": 1
+    },
+    {
+      "key": "human_answered_instead",
+      "take": 1
+    },
+    {
+      "key": "answered_not_possible",
+      "take": 1
+    },
+    {
+      "key": "partial_answer",
+      "take": 1
+    }
+  ],
+  "counts": {
+    "control": 6,
+    "gap": 6,
+    "total": 12
+  },
+  "cases": [
+    {
+      "case_id": "ctl-001",
+      "cohort": "control",
+      "quota_key": "answered",
+      "july_category": "answered",
+      "july_answer_type": "full_answer",
+      "feedback_id": "ece51ead-855c-4343-9426-20dbf44f9632",
+      "question": "any ideas on how to resolve a charge back and QB Matching issue?",
+      "july_confidence": 0.75,
+      "july_answer_text": "For the *chargeback*, the main path is to *respond immediately* if it\u2019s still in *Inquiry* status and submit a rebuttal with evidence tied to the chargeback reason code; if they accept the chargeback, the *$25 fee still applies*. [HC-1]\n\nFor the *QuickBooks matching/sync side*, start in *Company Set"
+    },
+    {
+      "case_id": "ctl-003",
+      "cohort": "control",
+      "quota_key": "answered",
+      "july_category": "answered",
+      "july_answer_type": "full_answer",
+      "feedback_id": "d034992f-88b8-4f24-8d80-a86fabe56142",
+      "question": "is there a limit to the amount of related customers can live under one record?",
+      "july_confidence": 0.3,
+      "july_answer_text": "There\u2019s *no documented limit* on how many related customers can sit under one parent customer record \u2014 the help center explicitly says you can add *as many related customers as needed*. [HC-1]\n\nInternal docs don\u2019t add a hard cap either; they describe the parent/related customer setup for organizing "
+    },
+    {
+      "case_id": "ctl-011",
+      "cohort": "control",
+      "quota_key": "answered",
+      "july_category": "answered",
+      "july_answer_type": "full_answer",
+      "feedback_id": "2dbf5fac-9a25-4c08-a621-05118cf32f8f",
+      "question": "what does \"specified URL not found\" error means when updating material list cost?",
+      "july_confidence": 0.45,
+      "july_answer_text": "`\"Specified URL not found\"` usually means the request is hitting the *wrong API endpoint* or a *resource URL that doesn\u2019t exist* when updating a material list. The update endpoint is `PUT /material-list/{id}` under the base URL `https://ywe3crmpll.execute-api.us-east-2.amazonaws.com/stage`, so a wro"
+    },
+    {
+      "case_id": "ctl-014",
+      "cohort": "control",
+      "quota_key": "answered",
+      "july_category": "answered",
+      "july_answer_type": "full_answer",
+      "feedback_id": "e06e189f-6980-4b9f-b805-eb4ca96d02f1",
+      "question": "what is the best way to log someone as unavailable or out of office on the calendar?",
+      "july_confidence": 0.15,
+      "july_answer_text": "Best practice is to log it as a *Task* assigned to that user \u2014 tasks are non-billable calendar events and are commonly used for PTO, meetings, lunch, admin time, or other unavailable blocks. [HC-1]\n\nTo set it up:\n1. Go to *Create Job* and click *Create Task* at the top. [HC-1]\n2. Give it a clear tit"
+    },
+    {
+      "case_id": "ctl-016",
+      "cohort": "control",
+      "quota_key": "answered",
+      "july_category": "answered",
+      "july_answer_type": "full_answer",
+      "feedback_id": "5315a24a-a4ad-4889-aa1e-d9d2d5d34742",
+      "question": "When I am creating a customer - if they have additional contacts, how do I set for the additional contact to be the POC for that job?",
+      "july_confidence": 0.45,
+      "july_answer_text": "Yes \u2014 set the *POC at the job level*, not on the customer record. When you create the job and attach the customer, use the job\u2019s *Contact* field to pick the additional contact for that specific job. [HC-1]\n\n- Add/save the extra person as an *Additional Contact* on the customer first. [HC-4]\n- Create"
+    },
+    {
+      "case_id": "ctl-034",
+      "cohort": "control",
+      "quota_key": "answered",
+      "july_category": "answered",
+      "july_answer_type": "full_answer",
+      "feedback_id": "6d60051b-d671-497d-9f40-5c30c5de4b91",
+      "question": "can you pull reports on flat rate jobs from pricebook",
+      "july_confidence": 0.6,
+      "july_answer_text": "There\u2019s *no documented dedicated report in Pricebook itself* for pulling a list of flat-rate jobs. Internal docs describe Pricebook as the tool to *create, organize, and use* flat-rate jobs, but not a Pricebook-specific reporting workflow. [INT-1]\n\nIf they need reporting on those jobs, the documente"
+    },
+    {
+      "case_id": "gap-051",
+      "cohort": "gap",
+      "quota_key": "gap_cant_find",
+      "july_category": "gap_cant_find",
+      "july_answer_type": "cant_find",
+      "feedback_id": "80fdd253-ec3d-4ccb-ad98-24ff2a1963c6",
+      "question": "are we officially switching back to lunchdrop, club feast is grayed out",
+      "july_confidence": 0.3,
+      "july_answer_text": "I couldn\u2019t find anything in either the help center or Confluence about an official switch from *Club Feast* back to *Lunchdrop*. Confluence didn\u2019t return anything useful here, so there\u2019s no internal doc I can point to confirming a policy change. [HC-1]\n\nIf *Club Feast* is grayed out, that usually me"
+    },
+    {
+      "case_id": "gap-066",
+      "cohort": "gap",
+      "quota_key": "escalated",
+      "july_category": "escalated_auto",
+      "july_answer_type": "partial",
+      "feedback_id": "a843aefa-1e15-421c-91aa-951cf7724fbd",
+      "question": "or customers",
+      "july_confidence": 0.45,
+      "july_answer_text": "You can choose *which records sync to CompanyCam* by controlling the integration at the *job/project level* \u2014 it does *not* automatically sync every customer record or every file in the account. The docs returned here don\u2019t include a relevant CompanyCam article, and Confluence didn\u2019t return anything"
+    },
+    {
+      "case_id": "gap-067",
+      "cohort": "gap",
+      "quota_key": "escalated",
+      "july_category": "escalated_user",
+      "july_answer_type": "not_possible_claim",
+      "feedback_id": "4ccca36b-d45f-4370-9634-f74ca514b7e5",
+      "question": "can customers view site visits in the customer portal",
+      "july_confidence": 0.95,
+      "july_answer_text": "Customers *don\u2019t appear to have a separate way to view site visits* in the Customer Portal. The portal docs only show customer access to *jobs, estimates, invoices, and payments*, and in *My Jobs* they can view job details based on the portal permissions you\u2019ve enabled. [HC-1]\n\nInternally, site visi"
+    },
+    {
+      "case_id": "gap-076",
+      "cohort": "gap",
+      "quota_key": "human_answered_instead",
+      "july_category": "human_answered_instead",
+      "july_answer_type": "full_answer",
+      "feedback_id": "877715f9-202b-4576-af17-750129de39a1",
+      "question": "does partner payments have card fee recovery?",
+      "july_confidence": 0.6,
+      "july_answer_text": "No \u2014 *Partner Payments* does *not* have Card Fee Recovery. The help center says Card Fee Recovery requires *FieldPulse Payments* to be enabled, and internal docs narrow that further: it\u2019s available for *US* accounts using *FieldPulse Payments (Rainforest)*, and internal docs also list *CardConnect* "
+    },
+    {
+      "case_id": "gap-086",
+      "cohort": "gap",
+      "quota_key": "answered_not_possible",
+      "july_category": "answered_not_possible",
+      "july_answer_type": "not_possible_claim",
+      "feedback_id": "0a8286d8-c8c0-4de7-830a-279852549271",
+      "question": "in offline mode, it does not show the correct date when it is activated. is there a way to choose the date you see",
+      "july_confidence": 0.75,
+      "july_answer_text": "There\u2019s *no documented way to manually choose the date shown in Offline Mode.* Offline Mode turns on automatically when the device loses connection, and changes made offline save locally and sync once you reconnect. [HC-2]\n\nFor *Timesheets* specifically, offline access is limited to *your own entrie"
+    },
+    {
+      "case_id": "gap-094",
+      "cohort": "gap",
+      "quota_key": "partial_answer",
+      "july_category": "partial_answer",
+      "july_answer_type": "partial",
+      "feedback_id": "244fa75e-cb1c-4f2a-8c0c-2308887710c5",
+      "question": "i have a semi annual service agreement, and its $300 per visit ($600 annual). i want to tell or show the customer that they can save $100 and pay only $500 if they choose to pay for the entire thing up front. how can i show this on the maintenance agreement, possibly with recurring billing to communicate this",
+      "july_confidence": 0.75,
+      "july_answer_text": "You can *set the agreement up to show the discounted upfront price*, but I didn\u2019t find a documented way to show *both* prices side-by-side on the Maintenance Agreement itself (for example, \u201c$300 per visit / $600 annual\u201d *and* \u201cpay upfront for $500\u201d). [HC-1]\n\nBest-fit setup:\n- In the *Maintenance Agr"
+    }
+  ]
+}
