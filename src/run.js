@@ -262,11 +262,15 @@ export function createRun({
       for (const source of selected) {
         try {
           const watermark = await events.sourceWatermark(source);
+          const computed = watermark
+            ? new Date(new Date(watermark).getTime() - env.repullWindowDays * DAY_MS).toISOString()
+            : EPOCH;
+          // HC_LOOP_SINCE_FLOOR caps how far back an automatic pull reaches; an
+          // explicit --since still wins so an operator can backfill on purpose.
+          const floor = env.sinceFloor && !Number.isNaN(Date.parse(env.sinceFloor)) ? env.sinceFloor : null;
           const since =
             opts.since ??
-            (watermark
-              ? new Date(new Date(watermark).getTime() - env.repullWindowDays * DAY_MS).toISOString()
-              : EPOCH);
+            (floor && new Date(floor) > new Date(computed) ? new Date(floor).toISOString() : computed);
 
           const rows = await sourceReader.fetchNewEvents(source, since, {
             limit: opts.limit ?? DEFAULT_FETCH_LIMIT,

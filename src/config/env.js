@@ -117,6 +117,9 @@ export function loadEnv(envObject) {
   // far back a "repull" (re-check already-seen events) looks.
   const maxChecksPerRun = parseNumber(envObject.HC_LOOP_MAX_CHECKS_PER_RUN, 40);
   const repullWindowDays = parseNumber(envObject.HC_LOOP_REPULL_DAYS, 14);
+  // Never pull events older than this, even on a first run with no watermark.
+  // Keeps the launch backlog to the window we actually want to work.
+  const sinceFloor = (envObject.HC_LOOP_SINCE_FLOOR || '').trim() || null;
 
   // Option B seam: whether the run may open preview PRs against the docs
   // repo. Off by default; src/github/preview.js throws PreviewPrDisabled
@@ -155,6 +158,7 @@ export function loadEnv(envObject) {
 
     maxChecksPerRun,
     repullWindowDays,
+    sinceFloor,
     hcLoopOpenPrs,
   };
 
@@ -207,6 +211,7 @@ export const githubToken = resolved?.githubToken ?? '';
 
 export const maxChecksPerRun = resolved?.maxChecksPerRun ?? 40;
 export const repullWindowDays = resolved?.repullWindowDays ?? 14;
+export const sinceFloor = resolved?.sinceFloor ?? null;
 export const hcLoopOpenPrs = resolved?.hcLoopOpenPrs ?? false;
 
 export function isSourceConfigured(source) {

@@ -591,6 +591,33 @@ test('the watermark is re-pulled HC_LOOP_REPULL_DAYS back', async () => {
   assert.equal(sourceReader.calls[0].sinceIso, '2026-09-01T00:00:00.000Z');
 });
 
+test('HC_LOOP_SINCE_FLOOR caps a first run and a stale watermark, but --since still wins', async () => {
+  const floor = '2026-09-01T00:00:00.000Z';
+  const first = harness({ env: { sinceFloor: floor }, rows: { juju: [] } });
+  await first.run(args({ source: ['juju'] }));
+  assert.equal(first.sourceReader.calls[0].sinceIso, floor, 'no watermark: the floor replaces the epoch');
+
+  const stale = harness({
+    env: { sinceFloor: floor, repullWindowDays: 14 },
+    rows: { juju: [] },
+    seed: { events: [{ id: 1, source: 'juju', source_event_id: '1', occurred_at: '2026-09-05T00:00:00.000Z', processed_at: NOW.toISOString() }] },
+  });
+  await stale.run(args({ source: ['juju'] }));
+  assert.equal(stale.sourceReader.calls[0].sinceIso, floor, 'watermark minus 14 days is before the floor, so the floor wins');
+
+  const fresh = harness({
+    env: { sinceFloor: floor, repullWindowDays: 14 },
+    rows: { juju: [] },
+    seed: { events: [{ id: 1, source: 'juju', source_event_id: '1', occurred_at: '2026-09-30T00:00:00.000Z', processed_at: NOW.toISOString() }] },
+  });
+  await fresh.run(args({ source: ['juju'] }));
+  assert.equal(fresh.sourceReader.calls[0].sinceIso, '2026-09-16T00:00:00.000Z', 'a watermark inside the window is untouched');
+
+  const explicit = harness({ env: { sinceFloor: floor }, rows: { juju: [] } });
+  await explicit.run(args({ source: ['juju'], since: '2026-07-01' }));
+  assert.equal(explicit.sourceReader.calls[0].sinceIso, '2026-07-01', '--since is an operator decision and beats the floor');
+});
+
 test('--source=juju skips every other configured source', async () => {
   const { run, sourceReader } = harness({ rows: { juju: [], sidecar: [] } });
 
