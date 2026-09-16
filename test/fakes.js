@@ -346,6 +346,13 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
     async hasAction(candidateId, action) {
       return state.actions.some((a) => a.candidateId === candidateId && a.action === action);
     },
+    async getAction(candidateId, action) {
+      const matches = state.actions.filter((a) => a.candidateId === candidateId && a.action === action);
+      const row = matches[matches.length - 1];
+      // Same projection shape as the real repo: `slackTs` is the argument
+      // name, `slack_ts` is the column the caller reads back.
+      return row ? { ...row, slack_ts: row.slackTs ?? row.slack_ts ?? null } : null;
+    },
   };
 
   const runs = {

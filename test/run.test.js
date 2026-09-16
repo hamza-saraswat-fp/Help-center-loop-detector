@@ -1386,3 +1386,36 @@ test('a docs index failure records the error, closes the run row, and exits 1', 
   assert.equal(mintlify.closed, 1, 'the Mintlify client was still closed');
   assert.equal(sourceReader.closed, 1, 'the source pools were still closed');
 });
+
+// --- final review: I5, the repair branch restores the Slack coordinates -----
+
+test('repairing a candidate that already has a posted action restores slack_ts and channel', async () => {
+  const { run, repos, poster } = harness({
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          status: 'new',
+          needs_answer: false,
+          category: 'using-fieldpulse',
+          destination: 'help_center',
+          verdict: 'INCORRECT',
+          question_paraphrase: 'Does the tag block scheduling?',
+          created_at: '2026-09-16T09:00:00.000Z',
+          slack_ts: null,
+          slack_channel: null,
+        },
+      ],
+    },
+  });
+  // The crash this repairs: recordAction landed, updateCandidate did not.
+  await repos.actions.recordAction({ candidateId: 1, action: 'posted', slackTs: '1726480000.000100' });
+
+  await run(args());
+
+  assert.equal(poster.posts.length, 0, 'the card must not go out a second time');
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.status, 'posted');
+  assert.equal(candidate.slack_ts, '1726480000.000100', 'the reactions poller can never see this candidate');
+  assert.equal(candidate.slack_channel, 'C-GAPS');
+});

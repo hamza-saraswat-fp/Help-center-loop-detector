@@ -611,7 +611,18 @@ export function createRun({
           // card went out and a previous run died before it could say so.
           if (await actions.hasAction(candidate.id, action)) {
             log(LANE, `candidate #${candidate.id} already has a ${action} action; repairing its status`);
-            await candidates.updateCandidate(candidate.id, { status: 'posted' });
+            // The status alone is not the whole repair: without slack_ts and
+            // slack_channel the reactions poller skips this candidate for
+            // good, so it could never be adopted or rejected. The action row
+            // is where the card's ts survived the crash; the channel is this
+            // mode's channel, which is the one it was posted to.
+            const previous = await actions.getAction(candidate.id, action);
+            const patch = { status: 'posted' };
+            if (previous?.slack_ts) {
+              patch.slack_ts = previous.slack_ts;
+              patch.slack_channel = candidate.slack_channel ?? channel;
+            }
+            await candidates.updateCandidate(candidate.id, patch);
             continue;
           }
 
