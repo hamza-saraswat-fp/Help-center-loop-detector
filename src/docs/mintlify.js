@@ -11,6 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 import { mintlifyMcpUrl } from '../config/env.js';
 import { log, warn } from '../log.js';
+import { withTimeout } from '../util/withTimeout.js';
 
 const LANE = 'mintlify';
 
@@ -20,32 +21,6 @@ export function defaultClientFactory(url) {
     client: new Client({ name: 'help-center-loop', version: '1.0.0' }),
     transport: new StreamableHTTPClientTransport(new URL(url)),
   };
-}
-
-/**
- * Race `promise` against a timeout. The timer is always cleared, whichever
- * side wins, so it never keeps the process alive.
- * @template T
- * @param {Promise<T>} promise
- * @param {number} timeoutMs
- * @returns {Promise<T>}
- */
-function withTimeout(promise, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
 }
 
 /**
