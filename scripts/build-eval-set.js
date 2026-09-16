@@ -83,7 +83,7 @@ async function pullParents(supabase, fromIso, toIso) {
 // limits while halving the round trips).
 async function pullChildren(supabase, parentIds) {
   const children = [];
-  const BATCH = 200;
+  const BATCH = 80;
   for (let i = 0; i < parentIds.length; i += BATCH) {
     const batch = parentIds.slice(i, i + BATCH);
     const { data, error } = await supabase
