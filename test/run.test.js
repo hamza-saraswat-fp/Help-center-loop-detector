@@ -1274,3 +1274,42 @@ test('a re-check keeps the priority the whole linked history earns, and last_see
   assert.equal(candidate.needs_answer, false);
   assert.equal(repos.state.events[1].outcome, 'candidate');
 });
+
+// --- final review: C1, secret redaction ------------------------------------
+
+test('a clone failure carrying a token is redacted in the log line and in loop_runs.errors', async () => {
+  const token = 'ghp_SUPERSECRET1234567890';
+  const { run, repos } = harness({
+    ensureDocsClone: async () => {
+      throw new Error(`Command failed: git clone https://x-access-token:${token}@github.com/acme/docs.git`);
+    },
+  });
+
+  const { exitCode, stats } = await run(args());
+
+  assert.equal(exitCode, 1);
+  assert.ok(!JSON.stringify(stats.errors).includes(token), 'the token reached stats.errors');
+  assert.ok(stats.errors[0].message.includes('x-access-token:***@'));
+  const runRow = repos.state.runs[0];
+  assert.ok(!JSON.stringify(runRow.errors).includes(token), 'the token reached the loop_runs row');
+});
+
+test('the source-failure Slack alert redacts a connection string password', async () => {
+  const { run, poster } = harness({
+    rows: { juju: new Error('connect ECONNREFUSED postgresql://loop:hunter2@db.example.com:5432/juju') },
+    seed: {
+      runs: [
+        { id: 1, mode: 'live', started_at: '2026-09-16T10:00:00.000Z', finished_at: '2026-09-16T10:01:00.000Z', errors: [{ lane: 'source', source: 'juju', message: 'down' }] },
+        { id: 2, mode: 'live', started_at: '2026-09-16T11:00:00.000Z', finished_at: '2026-09-16T11:01:00.000Z', errors: [{ lane: 'source', source: 'juju', message: 'down' }] },
+      ],
+    },
+  });
+
+  const { stats } = await run(args());
+
+  const alert = poster.posts.find((p) => p.card.text.startsWith('Source juju has failed'));
+  assert.ok(alert, 'no source-failure alert posted');
+  assert.ok(!alert.card.text.includes('hunter2'), 'the password reached Slack');
+  assert.ok(alert.card.text.includes('loop:***@db.example.com'));
+  assert.ok(!JSON.stringify(stats.errors).includes('hunter2'));
+});

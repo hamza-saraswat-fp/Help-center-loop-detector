@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { log, warn, error as logError } from './log.js';
+import { redactSecrets } from './util/redact.js';
 import { normalizeEvent } from './sources/adapter.js';
 import { holdUntil } from './prefilter/hold.js';
 import { destinationShortcut, loadShortcutRules } from './prefilter/shortcut.js';
@@ -68,8 +69,13 @@ const SUMMARY_MAX_ROWS = 500;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Every error message in this file ends up in a log line and in
+// `loop_runs.errors`, and plenty of them are written by libraries that echo
+// the credential they were handed (execFile's argv, pg's connection string,
+// the Slack SDK's token). The call sites that know they hold a secret redact
+// it themselves; this is the backstop that covers the ones that don't.
 function messageOf(err) {
-  return String(err?.message ?? err);
+  return redactSecrets(String(err?.message ?? err));
 }
 
 /**
@@ -263,7 +269,10 @@ export function createRun({
           const failures = await runs.consecutiveSourceFailures(source);
           if (failures >= 2 && channel) {
             await poster.postCard(channel, {
-              text: `Source ${source} has failed ${failures} runs in a row: ${message}`,
+              // `message` is already redacted by `messageOf`; redacting the
+              // assembled line as well keeps the guarantee local to the call
+              // that leaves the process.
+              text: redactSecrets(`Source ${source} has failed ${failures} runs in a row: ${message}`),
               blocks: [],
             });
           }
