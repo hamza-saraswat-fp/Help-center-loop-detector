@@ -201,3 +201,36 @@ test('consecutiveSourceFailures returns 0 instead of throwing when the read fail
 
   assert.equal(await runs.consecutiveSourceFailures('juju'), 0);
 });
+
+// ---------------------------------------------------------------------------
+// lastSummaryAt — Task 13's weekly-summary gate
+// ---------------------------------------------------------------------------
+
+test('lastSummaryAt returns the newest started_at of a run that posted a summary', async () => {
+  const { client, state } = makeClient({
+    select: { data: [{ started_at: '2026-09-07T14:03:00.000Z' }], error: null },
+  });
+  const runs = createRunsRepo({ client });
+
+  assert.equal(await runs.lastSummaryAt(), '2026-09-07T14:03:00.000Z');
+
+  const call = state.selects[0];
+  assert.equal(call.table, 'loop_runs');
+  assert.deepEqual(call.eq, ['summary_posted', true]);
+  assert.deepEqual(call.order, ['started_at', { ascending: false }]);
+  assert.equal(call.limit, 1);
+});
+
+test('lastSummaryAt returns null when no run has ever posted a summary', async () => {
+  const { client } = makeClient({ select: { data: [], error: null } });
+  const runs = createRunsRepo({ client });
+
+  assert.equal(await runs.lastSummaryAt(), null);
+});
+
+test('lastSummaryAt returns null instead of throwing when the select fails', async () => {
+  const { client } = makeClient({ select: { data: null, error: { message: 'boom' } } });
+  const runs = createRunsRepo({ client });
+
+  assert.equal(await runs.lastSummaryAt(), null);
+});

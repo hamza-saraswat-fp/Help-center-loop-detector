@@ -533,3 +533,44 @@ test('hasAction: true when a matching row exists, false otherwise', async () => 
     ['action', 'posted']
   );
 });
+
+// ---------------------------------------------------------------------------
+// bumpCheckAttempts — Task 13's three-strike rule for a failing check
+// ---------------------------------------------------------------------------
+
+test('bumpCheckAttempts: read-then-update, starting a missing counter at 1', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': { data: { detail: { escalation_type: 'no_answer' } }, error: null },
+    'gap_events.update': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  assert.equal(await events.bumpCheckAttempts(7), 1);
+
+  const updateCall = calls.find((c) => c.op === 'update');
+  assert.deepEqual(updateCall.payload, { detail: { escalation_type: 'no_answer', _check_attempts: 1 } });
+  assert.deepEqual(updateCall.filters, [{ method: 'eq', args: ['id', 7] }]);
+});
+
+test('bumpCheckAttempts: increments an existing counter and keeps the rest of detail', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': { data: { detail: { _check_attempts: 2, note: 'keep me' } }, error: null },
+    'gap_events.update': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  assert.equal(await events.bumpCheckAttempts(7), 3);
+
+  const updateCall = calls.find((c) => c.op === 'update');
+  assert.deepEqual(updateCall.payload, { detail: { _check_attempts: 3, note: 'keep me' } });
+});
+
+test('bumpCheckAttempts: returns 0 instead of throwing when the read fails', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': { data: null, error: { message: 'boom' } },
+  });
+  const events = createEventsRepo({ client, now });
+
+  assert.equal(await events.bumpCheckAttempts(7), 0);
+  assert.equal(calls.filter((c) => c.op === 'update').length, 0, 'a failed read must not write');
+});

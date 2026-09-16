@@ -101,7 +101,30 @@ export function createRunsRepo({ client }) {
     }
   }
 
-  return { startRun, finishRun, consecutiveSourceFailures };
+  // When a weekly summary was last posted, as the `started_at` of the newest
+  // run that posted one. Null means "never", which the orchestrator reads as
+  // due. `started_at` rather than `finished_at` because it is the column the
+  // ledger is indexed on and the one every other run query orders by; the two
+  // differ by minutes at most, and the gate only cares about days.
+  async function lastSummaryAt() {
+    try {
+      const { data, error } = await client
+        .from('loop_runs')
+        .select('started_at')
+        .eq('summary_posted', true)
+        .order('started_at', { ascending: false })
+        .limit(1);
+
+      if (error) throw new Error(error.message);
+      const row = Array.isArray(data) ? data[0] : data;
+      return row?.started_at ?? null;
+    } catch (err) {
+      logError('runs', `could not read the last summary run: ${err.message}`);
+      return null;
+    }
+  }
+
+  return { startRun, finishRun, consecutiveSourceFailures, lastSummaryAt };
 }
 
 let defaultRepo = null;
@@ -123,4 +146,8 @@ export function finishRun(id, stats) {
 
 export function consecutiveSourceFailures(source, opts) {
   return repo().consecutiveSourceFailures(source, opts);
+}
+
+export function lastSummaryAt() {
+  return repo().lastSummaryAt();
 }

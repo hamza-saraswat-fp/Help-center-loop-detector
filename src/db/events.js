@@ -147,7 +147,41 @@ export function createEventsRepo({ client, now = () => new Date() }) {
     }
   }
 
-  return { sourceWatermark, upsertEvents, listUnprocessed, markProcessed, markHeld };
+  // The three-strike rule for a failing check (see the plan's Run algorithm):
+  // the counter lives in `detail._check_attempts` rather than in its own
+  // column, so a retry budget only the orchestrator cares about costs no
+  // migration. PostgREST cannot increment a jsonb key in place, so this is a
+  // read-then-update: read `detail`, merge the bumped counter back, write the
+  // whole object. Two round trips and no atomicity, which is fine here: one
+  // cron process is the only writer, and the worst case of a lost update is
+  // one extra check attempt.
+  //
+  // Returns 0 on any failure, deliberately below the three-strike threshold —
+  // a ledger problem must not be what marks an event check_failed.
+  async function bumpCheckAttempts(id) {
+    try {
+      const { data, error } = await client.from('gap_events').select('detail').eq('id', id).maybeSingle();
+
+      if (error) throw new Error(error.message);
+
+      const detail = data?.detail && typeof data.detail === 'object' ? data.detail : {};
+      const previous = Number(detail._check_attempts ?? 0);
+      const attempts = (Number.isFinite(previous) ? previous : 0) + 1;
+
+      const { error: updateError } = await client
+        .from('gap_events')
+        .update({ detail: { ...detail, _check_attempts: attempts } })
+        .eq('id', id);
+
+      if (updateError) throw new Error(updateError.message);
+      return attempts;
+    } catch (err) {
+      logError('db', `bumpCheckAttempts(${id}) failed: ${err.message}`);
+      return 0;
+    }
+  }
+
+  return { sourceWatermark, upsertEvents, listUnprocessed, markProcessed, markHeld, bumpCheckAttempts };
 }
 
 let defaultRepo = null;
@@ -177,4 +211,8 @@ export function markProcessed(id, outcome, opts) {
 
 export function markHeld(id) {
   return repo().markHeld(id);
+}
+
+export function bumpCheckAttempts(id) {
+  return repo().bumpCheckAttempts(id);
 }
