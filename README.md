@@ -77,6 +77,10 @@ the plain `DOCS_REPO_URL` is logged.
 
 ## Deploy
 
+### The image and the deploy settings
+
+The service builds from the `Dockerfile` in this repo (Node 22 on Debian slim, plus `git`, which the sparse clone shells out to). Railway's default builder produced an image with Node 20 and no git, which is what took the first deploys down; the Dockerfile makes both explicit and reviewable. `railway.json` names the builder, the hourly cron, the start command, and the no-restart policy. If a deploy shows an empty cron or a restart-on-failure policy, the service is not reading the file: set the service's Config-as-code path to `railway.json` in its Settings, or set the cron and restart policy there directly. The first log line of every run is a preflight (`node <version> git <version or MISSING>`); if it says MISSING or below 22, stop there.
+
 The service runs on Railway as an hourly cron job, not a long-lived
 process:
 
