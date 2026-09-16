@@ -1,6 +1,8 @@
-// Shared test doubles. Grows as later tasks need more (fakeSupabase,
-// fakeSlack, fakePg, fakeExec, ...); for now, just the ones runCheck's
-// tests need.
+// Shared test doubles: the model/prompt/Mintlify/Onyx fakes runCheck's tests
+// need, the scriptable Supabase query builder db.test.js drives, and the
+// in-memory repo set the run orchestrator's tests assert against.
+
+import { jaccard } from '../src/prefilter/fingerprint.js';
 
 /**
  * A fake `callModel`. Pass a fixed string to always return it, or a
@@ -146,4 +148,194 @@ export function fakeSupabase(script = {}) {
   };
 
   return { client, calls };
+}
+
+/**
+ * In-memory stand-ins for the four db/* repos, sharing one `state` object so
+ * a test can assert on rows the way the real tables would hold them. Same
+ * method names and argument shapes as `createEventsRepo` /
+ * `createCandidatesRepo` / `createActionsRepo` / `createRunsRepo`, and the
+ * same "never throw" contract; behaviour is only as faithful as the run
+ * orchestrator's tests need (e.g. `upsertEvents` returns zeroed counts,
+ * which nothing reads).
+ *
+ * `seed` pre-populates `events` / `candidates` / `runs`; rows there need
+ * whatever columns the test asserts on, plus an `id`.
+ * @param {{now?: () => Date, seed?: {events?: object[], candidates?: object[], runs?: object[]}}} [opts]
+ */
+export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
+  const state = {
+    events: [...(seed.events ?? [])],
+    candidates: [...(seed.candidates ?? [])],
+    links: [],
+    actions: [],
+    runs: [...(seed.runs ?? [])],
+  };
+
+  const nextId = (rows) => rows.reduce((max, row) => Math.max(max, row.id ?? 0), 0) + 1;
+  const byId = (rows, id) => rows.find((row) => row.id === id) ?? null;
+  const newestFirst = (rows) => [...rows].sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+
+  const events = {
+    async sourceWatermark(source) {
+      const occurred = state.events.filter((e) => e.source === source).map((e) => e.occurred_at).sort();
+      return occurred.length > 0 ? occurred[occurred.length - 1] : null;
+    },
+    async upsertEvents(list) {
+      for (const event of list ?? []) {
+        const existing = state.events.find(
+          (e) => e.source === event.source && e.source_event_id === event.source_event_id,
+        );
+        if (existing) {
+          const reset = existing.truth_kind === 'none' && event.truth_kind !== 'none';
+          Object.assign(existing, event);
+          if (reset) {
+            existing.processed_at = null;
+            existing.outcome = null;
+          }
+        } else {
+          state.events.push({
+            id: nextId(state.events),
+            processed_at: null,
+            outcome: null,
+            candidate_id: null,
+            ...event,
+          });
+        }
+      }
+      return { inserted: 0, updated: 0, reset: 0 };
+    },
+    async listUnprocessed({ limit } = {}) {
+      const pending = state.events
+        .filter((e) => e.processed_at === null || e.processed_at === undefined)
+        .sort((a, b) => new Date(a.occurred_at) - new Date(b.occurred_at));
+      return limit === undefined || limit === null ? pending : pending.slice(0, limit);
+    },
+    async markProcessed(id, outcome, { candidateId = null } = {}) {
+      const row = byId(state.events, id);
+      if (!row) return false;
+      Object.assign(row, { processed_at: now().toISOString(), outcome, candidate_id: candidateId });
+      return true;
+    },
+    async markHeld(id) {
+      const row = byId(state.events, id);
+      if (!row) return false;
+      row.outcome = 'held';
+      return true;
+    },
+    async bumpCheckAttempts(id) {
+      const row = byId(state.events, id);
+      if (!row) return 0;
+      row.detail = { ...(row.detail ?? {}) };
+      row.detail._check_attempts = Number(row.detail._check_attempts ?? 0) + 1;
+      return row.detail._check_attempts;
+    },
+  };
+
+  const candidates = {
+    async findByFingerprint(hash) {
+      return state.candidates.find((c) => c.fingerprint === hash) ?? null;
+    },
+    async findNearDuplicate(category, terms, { threshold = 0.6 } = {}) {
+      if (!terms || terms.length === 0) return null;
+      let best = null;
+      let bestScore = -1;
+      for (const row of state.candidates) {
+        if (row.category !== category) continue;
+        const score = jaccard(terms, row.fingerprint_terms ?? []);
+        if (score < threshold || score <= bestScore) continue;
+        best = row;
+        bestScore = score;
+      }
+      return best;
+    },
+    async insertCandidate(row) {
+      const iso = now().toISOString();
+      const candidate = {
+        id: nextId(state.candidates),
+        status: 'new',
+        first_seen: iso,
+        last_seen: iso,
+        created_at: iso,
+        event_count: 1,
+        slack_ts: null,
+        slack_channel: null,
+        ...row,
+      };
+      state.candidates.push(candidate);
+      return { ...candidate };
+    },
+    async mergeEventIntoCandidate(candidate, event) {
+      const row = byId(state.candidates, candidate.id);
+      if (!row) return null;
+      row.event_count = (candidate.event_count ?? row.event_count ?? 1) + 1;
+      if (new Date(event.occurred_at) > new Date(row.last_seen)) row.last_seen = event.occurred_at;
+      if (event.truth_kind !== 'none') row.needs_answer = false;
+      return { ...row };
+    },
+    async linkEvent(candidateId, eventId) {
+      state.links.push({ candidate_id: candidateId, event_id: eventId });
+      const event = byId(state.events, eventId);
+      if (event) event.candidate_id = candidateId;
+      return true;
+    },
+    async updateCandidate(id, patch) {
+      const row = byId(state.candidates, id);
+      if (!row) return null;
+      Object.assign(row, patch, { updated_at: now().toISOString() });
+      return { ...row };
+    },
+    async listByStatus(statuses, { limit = 100 } = {}) {
+      return state.candidates
+        .filter((c) => statuses.includes(c.status))
+        .sort((a, b) => a.id - b.id)
+        .slice(0, limit)
+        .map((c) => ({ ...c }));
+    },
+    async linkedEvents(candidateId) {
+      return state.events
+        .filter((e) => e.candidate_id === candidateId)
+        .sort((a, b) => new Date(b.occurred_at) - new Date(a.occurred_at));
+    },
+  };
+
+  const actions = {
+    async recordAction(action) {
+      const row = { id: nextId(state.actions), ...action };
+      state.actions.push(row);
+      return { ...row };
+    },
+    async hasAction(candidateId, action) {
+      return state.actions.some((a) => a.candidateId === candidateId && a.action === action);
+    },
+  };
+
+  const runs = {
+    async startRun(mode, meta = {}) {
+      if (mode === 'dry_run') return null;
+      const row = { id: nextId(state.runs), mode, started_at: now().toISOString(), errors: [], ...meta };
+      state.runs.push(row);
+      return row.id;
+    },
+    async finishRun(id, stats = {}) {
+      if (id === null || id === undefined) return null;
+      const row = byId(state.runs, id);
+      if (row) Object.assign(row, stats, { finished_at: now().toISOString() });
+      return id;
+    },
+    async consecutiveSourceFailures(source, { runs: window = 3 } = {}) {
+      let count = 0;
+      for (const row of newestFirst(state.runs.filter((r) => r.finished_at)).slice(0, window)) {
+        if (!(row.errors ?? []).some((e) => e?.source === source)) break;
+        count += 1;
+      }
+      return count;
+    },
+    async lastSummaryAt() {
+      const posted = newestFirst(state.runs.filter((r) => r.summary_posted));
+      return posted[0]?.started_at ?? null;
+    },
+  };
+
+  return { state, events, candidates, actions, runs };
 }
