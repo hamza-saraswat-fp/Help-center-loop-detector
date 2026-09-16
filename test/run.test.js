@@ -1329,3 +1329,32 @@ test('a candidate whose posted action was already recorded is not left at new', 
   assert.equal(candidate.slack_channel, 'C-GAPS');
   assert.equal(stats.cards_posted, 1);
 });
+
+// --- final review: I3, a failed candidate insert spends the check budget ----
+
+test('a failed candidate insert bumps the check attempts instead of re-checking forever', async () => {
+  const { run, repos, runCheck } = harness({ rows: { juju: [JUJU_ROWS[1]] } });
+  repos.failNext('insertCandidate');
+
+  await run(args());
+
+  assert.equal(repos.state.candidates.length, 0, 'nothing was written');
+  const event = repos.state.events[0];
+  assert.equal(event.processed_at, null, 'the event is still pending a retry');
+  assert.equal(event.detail._check_attempts, 1);
+  assert.equal(runCheck.seen.length, 1);
+});
+
+test('three failed candidate inserts mark the event check_failed and stop the spend', async () => {
+  const { run, repos } = harness({ rows: { juju: [JUJU_ROWS[1]] } });
+  repos.failNext('insertCandidate', 3);
+
+  await run(args({ skipPoll: true }));
+  await run(args({ skipPoll: true }));
+  await run(args({ skipPoll: true }));
+
+  const event = repos.state.events[0];
+  assert.equal(event.detail._check_attempts, 3);
+  assert.equal(event.outcome, 'check_failed');
+  assert.ok(event.processed_at, 'the event is closed out rather than re-checked next run');
+});

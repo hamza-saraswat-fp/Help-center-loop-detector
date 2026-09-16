@@ -544,6 +544,15 @@ export function createRun({
 
         if (!candidate) {
           logError(LANE, `could not record a candidate for ${label}; leaving the event unprocessed`);
+          // The same three-strike budget the CheckFailed path applies. An
+          // unprocessed event comes back next run and buys another model call,
+          // so a write that will never succeed (a NOT NULL or CHECK violation
+          // in this row) would otherwise cost one call an hour, forever.
+          const attempts = await events.bumpCheckAttempts(event.id);
+          if (attempts >= MAX_CHECK_ATTEMPTS) {
+            log(LANE, `giving up on ${label} after ${attempts} failed candidate writes`);
+            await events.markProcessed(event.id, 'check_failed');
+          }
           return;
         }
 

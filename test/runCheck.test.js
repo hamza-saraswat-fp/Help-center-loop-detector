@@ -269,3 +269,40 @@ test('addPromptUse records the gap_check slot when run inside a trace scope', as
     assert.deepEqual(trace.prompts.gap_check, { version: '1.0.0', model: 'test/model' });
   });
 });
+
+// --- final review: I3, the NOT NULL paraphrase ------------------------------
+
+test('a reply with no question_paraphrase falls back to the question, capped at 200 chars', async () => {
+  const index = buildIndex();
+  const question = `Why does ${'a'.repeat(300)} happen?`;
+  const runCheck = createRunCheck(
+    baseDeps({
+      callModel: fakeModel(JSON.stringify({ verdict: 'MISSING', destination: 'help_center', claims: [] })),
+    }),
+  );
+
+  const result = await runCheck(juju({ question, truth_kind: 'none' }), index);
+
+  assert.equal(result.question_paraphrase, question.slice(0, 200));
+  assert.equal(result.question_paraphrase.length, 200);
+});
+
+test('a reply with a question_paraphrase keeps the model\'s own wording', async () => {
+  const index = buildIndex();
+  const runCheck = createRunCheck(
+    baseDeps({
+      callModel: fakeModel(
+        JSON.stringify({
+          verdict: 'MISSING',
+          destination: 'help_center',
+          question_paraphrase: 'How do tags work?',
+          claims: [],
+        }),
+      ),
+    }),
+  );
+
+  const result = await runCheck(juju({ question: 'something else entirely' }), index);
+
+  assert.equal(result.question_paraphrase, 'How do tags work?');
+});

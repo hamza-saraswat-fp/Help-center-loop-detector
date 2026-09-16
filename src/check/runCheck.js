@@ -230,6 +230,17 @@ export function createRunCheck({
     if (!parsed) throw new CheckFailed('parse', new Error('no parsable verdict'));
     const result = applyRetrievalRules(parsed, { index, citedPaths });
 
+    // `gap_candidates.question_paraphrase` is NOT NULL. A reply that omits it
+    // would fail the insert, and a failed insert leaves the event unprocessed
+    // -- so without this the same event buys one model call every run, for as
+    // long as the model keeps omitting the field. The raw question is a worse
+    // paraphrase than the model's, but it is a true one, and 200 chars is well
+    // inside what the card renders.
+    if (!result.question_paraphrase) {
+      const fallback = String(event.question ?? '').trim().slice(0, 200);
+      if (fallback) result.question_paraphrase = fallback;
+    }
+
     // Step 10: assemble the CheckResult.
     let targetArticleUrl = null;
     if (result.target_article_path) {
