@@ -90,6 +90,10 @@ process:
 4. Two Slack channels matter: `SLACK_GAPS_CHANNEL_ID` (live candidate
    cards, the real queue) and `SLACK_SHADOW_CHANNEL_ID` (shadow-mode cards,
    for watching the loop before it goes live).
+5. Set `SOURCE_PG_SSL_CA` to the source provider's CA certificate before
+   switching `HC_LOOP_MODE` to `live`. With it empty, the source connection
+   falls back to `rejectUnauthorized: false`, which is TLS with no
+   certificate verification against a production source database.
 
 Start in `HC_LOOP_MODE=shadow` for a week before switching to `live`. See
 `HC_LOOP_MANUAL.md`'s "Rollout" section.

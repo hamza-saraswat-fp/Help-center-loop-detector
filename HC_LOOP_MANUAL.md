@@ -338,10 +338,16 @@ something the loop protects itself against automatically.
   `loop_runs.cost_usd`. A run that's unexpectedly expensive is worth
   checking against `HC_LOOP_MAX_CHECKS_PER_RUN`, since cost scales with how
   many events got a full model-backed check.
+- **`SOURCE_PG_SSL_CA` before `live`**: set it in Railway, with the source
+  provider's CA certificate, before flipping `HC_LOOP_MODE` to `live`. When
+  it is empty the source pool falls back to `rejectUnauthorized: false`,
+  which is TLS with no certificate verification against a production source
+  database. The fallback exists so a first shadow run is not blocked on a
+  certificate, it is not what the loop should read production on.
 - **Reading a failed run**: a run only exits non-zero (1) when the docs
-  clone itself fails, everything else (a dead source, a failed Slack post, a
-  check that throws) is recorded in `loop_runs.errors` and the run keeps
-  going. So "the run failed" almost always means "read the `errors` column
+  clone or the docs index itself fails, everything else (a dead source, a
+  failed Slack post, a check that throws) is recorded in `loop_runs.errors`
+  and the run keeps going. So "the run failed" almost always means "read the `errors` column
   on the most recent `loop_runs` row," not "check the process exit code."
 - **Swapping the prompt**: the `gap_check` prompt lives in `prompts/` as a
   plain text file, and is deployed via a migration that calls
