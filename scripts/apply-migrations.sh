@@ -35,8 +35,11 @@ for path in "$migrations_dir"/*.sql; do
   [[ -e "$path" ]] || continue
   filename="$(basename "$path")"
 
-  recorded="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -tAc \
-    "select 1 from _migrations where filename = '$filename';")"
+  # `-v mig_filename=...` plus `:'mig_filename'` binds the name as a quoted
+  # literal, rather than interpolating it into the SQL text where a quote in a
+  # filename would break the statement.
+  recorded="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v mig_filename="$filename" -tAc \
+    "select 1 from _migrations where filename = :'mig_filename';")"
 
   if [[ -n "$recorded" ]]; then
     echo "[migrate] skip    $filename (already applied)"
@@ -55,8 +58,9 @@ for path in "$migrations_dir"/*.sql; do
   # would break. psql runs all -f and -c commands in order, inside the one
   # transaction.
   psql "$DATABASE_URL" --single-transaction -v ON_ERROR_STOP=1 -q \
+    -v mig_filename="$filename" \
     -f "$path" \
-    -c "insert into _migrations (filename) values ('$filename');"
+    -c "insert into _migrations (filename) values (:'mig_filename');"
   applied=$((applied + 1))
 done
 

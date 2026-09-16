@@ -21,7 +21,15 @@ function fatal(what, reason) {
 process.on('unhandledRejection', (reason) => fatal('unhandled rejection', reason));
 process.on('uncaughtException', (err) => fatal('uncaught exception', err));
 
-const args = parseArgs(process.argv.slice(2));
+// A bad flag is an operator typo, not a crash: one `[index]` line naming the
+// flag, before run() opens anything.
+let args;
+try {
+  args = parseArgs(process.argv.slice(2));
+} catch (err) {
+  error('index', `bad arguments: ${err.message}`);
+  process.exit(1);
+}
 
 run(args)
   .then((result) => {
