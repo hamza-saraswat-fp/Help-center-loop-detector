@@ -693,6 +693,8 @@ export async function run(opts = {}) {
   const { createActionsRepo } = await import('./db/actions.js');
   const { createRunsRepo } = await import('./db/runs.js');
   const { createSlackPoster } = await import('./slack/post.js');
+  const { pollReactions } = await import('./slack/reactions.js');
+  const { pollPrs } = await import('./github/prs.js');
   const { WebClient } = await import('@slack/web-api');
 
   const client = getLoopClient();
@@ -712,6 +714,8 @@ export async function run(opts = {}) {
     actions: createActionsRepo({ client }),
     runs: createRunsRepo({ client }),
     poster: createSlackPoster({ client: new WebClient(env.slackBotToken) }),
+    pollReactions,
+    pollPrs,
     categoryMap: loadCategoryMap(),
     ownerMapping: JSON.parse(
       readFileSync(path.join(__dirname, '..', 'config', 'owner_mapping.json'), 'utf8'),
