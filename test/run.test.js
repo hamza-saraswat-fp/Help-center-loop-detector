@@ -1358,3 +1358,31 @@ test('three failed candidate inserts mark the event check_failed and stop the sp
   assert.equal(event.outcome, 'check_failed');
   assert.ok(event.processed_at, 'the event is closed out rather than re-checked next run');
 });
+
+// --- final review: I4, an index failure closes the ledger -------------------
+
+test('a docs index failure records the error, closes the run row, and exits 1', async () => {
+  const { run, repos, poster, sourceReader, mintlify } = harness({
+    rows: { juju: [JUJU_ROWS[1]] },
+    buildDocsIndex: () => {
+      throw new Error('EACCES reading docs.json');
+    },
+  });
+
+  const { exitCode, stats } = await run(args());
+
+  assert.equal(exitCode, 1);
+  assert.equal(stats.errors.length, 1);
+  assert.equal(stats.errors[0].lane, 'index');
+  assert.match(stats.errors[0].message, /EACCES/);
+
+  const runRow = repos.state.runs[0];
+  assert.ok(runRow.finished_at, 'the loop_runs row was left open');
+  assert.equal(runRow.errors.length, 1);
+
+  assert.equal(poster.posts.length, 0, 'nothing was posted');
+  assert.equal(repos.state.candidates.length, 0);
+  assert.equal(sourceReader.calls.length, 0, 'no source was queried');
+  assert.equal(mintlify.closed, 1, 'the Mintlify client was still closed');
+  assert.equal(sourceReader.closed, 1, 'the source pools were still closed');
+});

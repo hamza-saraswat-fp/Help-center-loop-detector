@@ -12,9 +12,9 @@
 //
 //   A lane that fails degrades; it does not end the run. A dead source, a
 //   failed Slack post, a check that throws -- each is recorded and the run
-//   carries on. The single exception is the docs clone: without it there is
-//   nothing to check against, so the run finishes with a clone error and
-//   exits 1.
+//   carries on. The single exception is the docs corpus: without a clone and
+//   an index there is nothing to check against, so the run finishes with that
+//   error recorded and exits 1.
 //
 //   The ledger is always closed. `finishRun`, `mintlify.close()` and
 //   `closeSourcePools()` live in a `finally`, so a crash mid-run still leaves
@@ -213,10 +213,25 @@ export function createRun({
     }
 
     stats.docs_sha = docs.sha;
-    const index = buildDocsIndex(docs.dir, docs.sha);
-    log(LANE, `docs sha=${docs.sha} articles=${index.byPath.size}`);
 
     try {
+      // Inside the try, not above it: `startRun` has already opened a
+      // loop_runs row, so an unreadable .mdx or a permissions error here has
+      // to close that row rather than throw out of run() and leave it open
+      // forever. Like the clone, there is nothing to check against without an
+      // index, so this ends the run -- but through the finally, with the
+      // error recorded.
+      let index;
+      try {
+        index = buildDocsIndex(docs.dir, docs.sha);
+      } catch (err) {
+        const indexError = { lane: 'index', message: messageOf(err) };
+        logError(LANE, `docs index failed, abandoning the run: ${indexError.message}`);
+        stats.errors.push(indexError);
+        return { exitCode: 1, stats };
+      }
+      log(LANE, `docs sha=${docs.sha} articles=${index.byPath.size}`);
+
       // Null means Mintlify is unavailable this run; `search` then returns []
       // and the check runs on the local lexical index alone.
       await mintlify.connect();
