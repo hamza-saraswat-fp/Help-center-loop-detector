@@ -20,9 +20,25 @@ const QUERY = 'select * from hc_gap_events_v where occurred_at >= $1 order by oc
  * `statement_timeout`, which is the per-stage "source query" budget from
  * Global Constraints.
  */
+/**
+ * Drop any `sslmode` query parameter from a connection string. The pg driver
+ * turns `sslmode=require` into certificate verification, which overrides the
+ * explicit `ssl` option below and fails against Supabase's pooler with
+ * "self-signed certificate in certificate chain". The explicit option is the
+ * one that carries the CA (or the documented relaxed fallback), so the URL
+ * form must not compete with it.
+ * @param {string} connectionString
+ * @returns {string}
+ */
+export function stripSslMode(connectionString) {
+  return String(connectionString ?? '')
+    .replace(/([?&])sslmode=[^&]*&?/i, '$1')
+    .replace(/[?&]$/, '');
+}
+
 export function defaultPoolFactory(connectionString, sslCa) {
   return new pg.Pool({
-    connectionString,
+    connectionString: stripSslMode(connectionString),
     ssl: sslCa ? { ca: sslCa } : { rejectUnauthorized: false },
     max: 2,
     statement_timeout: 20000,
