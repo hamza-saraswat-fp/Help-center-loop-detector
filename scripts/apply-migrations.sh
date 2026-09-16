@@ -37,9 +37,12 @@ for path in "$migrations_dir"/*.sql; do
 
   # `-v mig_filename=...` plus `:'mig_filename'` binds the name as a quoted
   # literal, rather than interpolating it into the SQL text where a quote in a
-  # filename would break the statement.
-  recorded="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v mig_filename="$filename" -tAc \
-    "select 1 from _migrations where filename = :'mig_filename';")"
+  # filename would break the statement. The SQL comes in on stdin (`-f -`), not
+  # `-c`: psql expands variables in its own lexer, which only reads files,
+  # stdin and interactive input, so a `:'var'` inside a `-c` string is sent to
+  # the server verbatim and fails as a syntax error.
+  recorded="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v mig_filename="$filename" -tA -f - \
+    <<<"select 1 from _migrations where filename = :'mig_filename';")"
 
   if [[ -n "$recorded" ]]; then
     echo "[migrate] skip    $filename (already applied)"
@@ -55,12 +58,12 @@ for path in "$migrations_dir"/*.sql; do
   echo "[migrate] apply   $filename"
   # -f rather than -c "\\i $path": psql's meta-command parser splits its
   # argument on unquoted whitespace, so a checkout directory with a space in it
-  # would break. psql runs all -f and -c commands in order, inside the one
-  # transaction.
+  # would break. psql runs all -f commands in order, inside the one
+  # transaction, and the second one is stdin so `:'mig_filename'` is expanded.
   psql "$DATABASE_URL" --single-transaction -v ON_ERROR_STOP=1 -q \
     -v mig_filename="$filename" \
     -f "$path" \
-    -c "insert into _migrations (filename) values (:'mig_filename');"
+    -f - <<<"insert into _migrations (filename) values (:'mig_filename');"
   applied=$((applied + 1))
 done
 
