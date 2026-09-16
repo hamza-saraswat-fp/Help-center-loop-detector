@@ -279,6 +279,30 @@ test('assertNoForbiddenMentions: throws on <!here>', () => {
   assert.throws(() => assertNoForbiddenMentions('everyone look <!here>'), ForbiddenMentionError);
 });
 
+test('assertNoForbiddenMentions: throws on the labeled form <@U012AB|hamza>', () => {
+  assert.throws(() => assertNoForbiddenMentions('thanks <@U012AB|hamza> for the answer'), ForbiddenMentionError);
+});
+
+test('assertNoForbiddenMentions: throws on a labeled W-prefixed id too', () => {
+  assert.throws(() => assertNoForbiddenMentions('cc <@W99XYZ|ops>'), ForbiddenMentionError);
+});
+
+test('assertNoForbiddenMentions: an allowed id is still allowed in the labeled form', () => {
+  const text = 'cc <@U060UTZ220M|hamza>';
+  assert.equal(assertNoForbiddenMentions(text, { allow: ['U060UTZ220M'] }), text);
+});
+
+test('assertNoForbiddenMentions: throws on a user-group mention <!subteam^...>', () => {
+  assert.throws(
+    () => assertNoForbiddenMentions('asking <!subteam^SAZ94GDB8|@marketing> about this'),
+    ForbiddenMentionError,
+  );
+});
+
+test('assertNoForbiddenMentions: the user-group match is case-insensitive and label-optional', () => {
+  assert.throws(() => assertNoForbiddenMentions('<!SUBTEAM^saz94gdb8>'), ForbiddenMentionError);
+});
+
 test('assertNoForbiddenMentions: throws on a line starting with @Claude', () => {
   assert.throws(() => assertNoForbiddenMentions('some text\n@Claude do this now'), ForbiddenMentionError);
 });
@@ -372,4 +396,24 @@ test('ownersFor: falls back to general when category is unmapped', () => {
   const mapping = { by_category: { 'using-fieldpulse': ['U1'] }, general: ['U2'] };
   assert.deepEqual(ownersFor('unmapped-category', mapping), ['U2']);
   assert.deepEqual(ownersFor('using-fieldpulse', mapping), ['U1']);
+});
+
+// --- final review: M4, a skipped Mintlify query must not be counted ---------
+
+test('buildCandidateCard: a skipped mintlify query is not counted in the evidence line', () => {
+  const candidate = baseCandidate({
+    evidence: {
+      queries: [
+        { kind: 'question', terms: ['tag'] },
+        { kind: 'answer', terms: [], skipped: true },
+        { kind: 'category', dir: 'using-fieldpulse', terms: ['tag'] },
+        { kind: 'mintlify', query: 'do tags block scheduling?', skipped: true },
+      ],
+      files_read: [],
+      closest_match: { path: null },
+    },
+    confidence: null,
+  });
+  const card = buildCandidateCard({ candidate, linked: linkedFixture(), now: NOW });
+  assert.match(card.text, /searched 2 ways/);
 });

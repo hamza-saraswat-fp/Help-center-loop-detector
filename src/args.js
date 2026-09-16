@@ -6,7 +6,7 @@
 //   --dry-run            boolean
 //   --source=<name>      repeatable, and/or a comma list; collected into an array
 //   --since=<ISO>         raw string, caller parses/validates
-//   --limit=<int>         parsed with parseInt
+//   --limit=<int>         a positive integer; anything else throws
 //   --skip-poll           boolean
 
 export function parseArgs(argv) {
@@ -47,7 +47,16 @@ export function parseArgs(argv) {
       continue;
     }
     if (flag === '--limit') {
-      args.limit = Number.parseInt(value, 10);
+      // Validated here rather than left to the caller: `Number.parseInt` turns
+      // `--limit=abc` into NaN, which used to reach both `fetchNewEvents` and
+      // `listUnprocessed` and fail inside the source query instead of saying
+      // which flag was wrong. `Number` rather than `parseInt` so `5abc` is an
+      // error too, not a silent 5.
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error(`--limit must be a positive integer, got "${value}"`);
+      }
+      args.limit = parsed;
       continue;
     }
   }

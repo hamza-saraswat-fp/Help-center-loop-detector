@@ -2,8 +2,8 @@
 // per-stage timeout (Global Constraints: Slack 10s, no retries inside a
 // run) and the same log-and-return-null contract as the db/* repos, so a
 // crashed Slack call never crashes a run. WebClient has no AbortSignal
-// support, so the deadline is enforced with `Promise.race` via a plain
-// timer (mirrors src/docs/mintlify.js's `withTimeout`).
+// support, so the deadline is enforced by src/util/withTimeout.js's plain
+// timer race.
 //
 // `postCard` never posts a card whose text fails `assertNoForbiddenMentions`
 // — that check runs first, and a throw there is logged and returns null
@@ -16,32 +16,9 @@ import { WebClient } from '@slack/web-api';
 import { assertNoForbiddenMentions } from './blocks.js';
 import { slackBotToken } from '../config/env.js';
 import { error as logError } from '../log.js';
+import { withTimeout } from '../util/withTimeout.js';
 
 const LANE = 'slack';
-
-/**
- * Race `promise` against a timeout. The timer is always cleared, whichever
- * side wins, so it never keeps the process alive.
- * @template T
- * @param {Promise<T>} promise
- * @param {number} timeoutMs
- * @returns {Promise<T>}
- */
-function withTimeout(promise, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
 
 /**
  * @param {{client:object, timeoutMs?:number}} deps `client` is a

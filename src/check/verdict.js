@@ -65,8 +65,13 @@ function coerceConfidence(value) {
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
+// Null, not a default. `help_center` is the one destination that produces a
+// posted card, so failing open into it would turn an unreadable reply into a
+// card in the channel -- every other coercion in this file fails safe, and so
+// does this one: `extractVerdict` treats a null destination as a parse
+// failure, which puts the reply on runCheck's three-strike budget.
 function coerceDestination(value) {
-  return DESTINATIONS.includes(value) ? value : 'help_center';
+  return DESTINATIONS.includes(value) ? value : null;
 }
 
 function coerceVerdict(value) {
@@ -89,8 +94,9 @@ function coerceClaims(value) {
 
 /**
  * Parse the model's raw reply into a validated verdict object, or null if
- * no JSON object can be extracted, it doesn't parse, or its `verdict` is
- * not one of the four allowed values.
+ * no JSON object can be extracted, it doesn't parse, its `verdict` is not one
+ * of the four allowed values, or its `destination` is missing or not one of
+ * the three allowed values.
  * @param {string} text
  * @returns {object|null}
  */
@@ -111,8 +117,11 @@ export function extractVerdict(text) {
   const verdict = coerceVerdict(parsed.verdict);
   if (verdict === null) return null;
 
+  const destination = coerceDestination(parsed.destination);
+  if (destination === null) return null;
+
   return {
-    destination: coerceDestination(parsed.destination),
+    destination,
     verdict,
     question_paraphrase: coerceString(parsed.question_paraphrase),
     truth_summary: coerceString(parsed.truth_summary),

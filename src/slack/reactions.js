@@ -3,35 +3,19 @@
 // `reactionsToActions` is pure so the mapping rules (bot's own reaction
 // doesn't count, allow-list when one is configured, adoption beats
 // rejection) are testable without a Slack client. `createReactionPoller`
-// does the I/O: one `reactions.get` per posted candidate, with the same
-// per-call timeout pattern as src/slack/post.js's `withTimeout` (WebClient
-// has no AbortSignal support).
+// does the I/O: one `reactions.get` per posted candidate, under the shared
+// src/util/withTimeout.js deadline (WebClient has no AbortSignal support).
 
 import { WebClient } from '@slack/web-api';
 
 import { slackBotToken } from '../config/env.js';
 import { log, error as logError } from '../log.js';
+import { withTimeout } from '../util/withTimeout.js';
 
 const LANE = 'reactions';
 
 const ADOPT_EMOJI = 'white_check_mark';
 const REJECT_EMOJI = 'x';
-
-function withTimeout(promise, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
 
 /**
  * Map a Slack message's `reactions` array to an adopt/reject verdict. Pure:

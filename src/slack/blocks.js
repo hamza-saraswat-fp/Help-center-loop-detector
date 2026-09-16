@@ -31,13 +31,20 @@ export class ForbiddenMentionError extends Error {
   }
 }
 
-const USER_MENTION_RE = /<@([UW][A-Z0-9]+)>/g;
-const BROADCAST_RE = /<!(?:here|channel|everyone)>/i;
+// Slack renders a user mention in two forms: the bare `<@U012AB>` and the
+// labeled `<@U012AB|hamza>` that a copied-out thread message carries. Both
+// ping. So does a user-group mention, `<!subteam^SAZ94GDB8|@marketing>`, which
+// is a broadcast to everyone in the group. Since Juju and Sidecar events
+// originate in Slack threads, all three forms appear verbatim in the text a
+// model may echo into `question_paraphrase` or `should_say`.
+const USER_MENTION_RE = /<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g;
+const BROADCAST_RE = /<!(?:here|channel|everyone)>|<!subteam\^[A-Z0-9]+(?:\|[^>]*)?>/i;
 const CLAUDE_LINE_RE = /^@claude\b/i;
 
 /**
  * Throws `ForbiddenMentionError` when `text` contains a Slack user mention
- * not in `allow`, a broadcast mention (`<!here>`/`<!channel>`/`<!everyone>`),
+ * not in `allow` (bare `<@U012AB>` or labeled `<@U012AB|hamza>`), a broadcast
+ * mention (`<!here>`/`<!channel>`/`<!everyone>`/`<!subteam^ID|@group>`),
  * or a line whose trimmed start is the literal "@Claude" — unless that line
  * starts with "To ship:" (the one place the words are allowed, as text a
  * human types, not a mention). Returns `text` unchanged otherwise.
@@ -49,7 +56,9 @@ export function assertNoForbiddenMentions(text, { allow = [] } = {}) {
   if (typeof text !== 'string') return text;
 
   if (BROADCAST_RE.test(text)) {
-    throw new ForbiddenMentionError('forbidden broadcast mention (<!here>/<!channel>/<!everyone>)');
+    throw new ForbiddenMentionError(
+      'forbidden broadcast mention (<!here>/<!channel>/<!everyone>/<!subteam^...>)',
+    );
   }
 
   for (const match of text.matchAll(USER_MENTION_RE)) {

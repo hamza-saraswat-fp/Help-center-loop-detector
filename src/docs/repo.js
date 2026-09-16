@@ -8,10 +8,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { log } from '../log.js';
+import { redactSecrets } from '../util/redact.js';
 
 /**
  * child_process.execFile wrapped as a Promise with a timeout. Rejects on
  * non-zero exit or timeout.
+ *
+ * The rejection message is built here rather than passed through from Node.
+ * Node's own execFile error reads `Command failed: <the entire argv>`, and
+ * this module's argv contains `https://x-access-token:<PAT>@github.com/...`
+ * -- src/run.js logs a failed clone's message and writes it into
+ * `loop_runs.errors`, so passing Node's message on would print the GitHub PAT
+ * to the Railway log stream and store it in Supabase. What we build instead is
+ * the command name, the exit code (or signal) and the process's own stderr,
+ * with every credential-shaped substring redacted.
  * @param {string} cmd
  * @param {string[]} args
  * @param {{cwd?: string, timeoutMs?: number}} [opts]
@@ -19,9 +29,17 @@ import { log } from '../log.js';
  */
 export function defaultExec(cmd, args, { cwd, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { cwd, timeout: timeoutMs }, (err, stdout) => {
+    execFile(cmd, args, { cwd, timeout: timeoutMs }, (err, stdout, stderr) => {
       if (err) {
-        reject(err);
+        const detail = redactSecrets(String(stderr ?? '')).trim();
+        const how = err.signal
+          ? `was killed with ${err.signal}${timeoutMs ? ` (timeout ${timeoutMs}ms)` : ''}`
+          : `exited with code ${err.code ?? 'unknown'}`;
+        const failure = new Error(redactSecrets(`${cmd} ${how}${detail ? `: ${detail}` : ''}`));
+        failure.code = err.code ?? null;
+        failure.signal = err.signal ?? null;
+        failure.stderr = detail;
+        reject(failure);
         return;
       }
       resolve({ stdout: stdout ? stdout.toString() : '' });

@@ -161,9 +161,55 @@ export function fakeSupabase(script = {}) {
  *
  * `seed` pre-populates `events` / `candidates` / `runs`; rows there need
  * whatever columns the test asserts on, plus an `id`.
+ *
+ * The real repos never throw: on a failed write they log and return null (a
+ * unique violation, a NOT NULL violation, a dropped connection). The guards
+ * that handle that -- run.js's "could not record a candidate", reactions.js's
+ * and prs.js's `if (!row) continue` -- are only reachable if the fakes can
+ * fail too, so `failNext(method, times = 1)` scripts the next `times` calls of
+ * `method` to return null without writing anything. `insertCandidate`,
+ * `recordAction`, `mergeEventIntoCandidate` and `updateCandidate` are the ones
+ * wired up. `pendingFailures()` returns the scripted failures that were never
+ * consumed, so a test can prove the path it meant to exercise was reached.
  * @param {{now?: () => Date, seed?: {events?: object[], candidates?: object[], runs?: object[]}}} [opts]
  */
+// Mirrors the `select(...)` in src/db/candidates.js's findNearDuplicate.
+const NEAR_DUPLICATE_COLUMNS = [
+  'id',
+  'fingerprint_terms',
+  'status',
+  'last_seen',
+  'event_count',
+  'priority',
+  'needs_answer',
+  'verdict',
+  'slack_ts',
+  'slack_channel',
+  'category',
+  'question_paraphrase',
+];
+
 export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
+  const failures = new Map();
+
+  /** Script the next `times` calls of `method` to return null. */
+  function failNext(method, times = 1) {
+    failures.set(method, (failures.get(method) ?? 0) + times);
+  }
+
+  /** True once per scripted failure, consuming it. */
+  function scriptedToFail(method) {
+    const remaining = failures.get(method) ?? 0;
+    if (remaining <= 0) return false;
+    failures.set(method, remaining - 1);
+    return true;
+  }
+
+  /** The scripted failures nothing ever consumed, as `[method, count]` pairs. */
+  function pendingFailures() {
+    return [...failures.entries()].filter(([, count]) => count > 0);
+  }
+
   const state = {
     events: [...(seed.events ?? [])],
     candidates: [...(seed.candidates ?? [])],
@@ -257,9 +303,16 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
         best = row;
         bestScore = score;
       }
-      return best;
+      // The same projection the real repo selects, not the whole row: a
+      // caller that reads a column this query does not fetch should see it
+      // missing here too.
+      if (!best) return null;
+      return Object.fromEntries(
+        NEAR_DUPLICATE_COLUMNS.filter((column) => column in best).map((column) => [column, best[column]]),
+      );
     },
     async insertCandidate(row) {
+      if (scriptedToFail('insertCandidate')) return null;
       const iso = now().toISOString();
       const candidate = {
         id: nextId(state.candidates),
@@ -276,6 +329,7 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       return { ...candidate };
     },
     async mergeEventIntoCandidate(candidate, event) {
+      if (scriptedToFail('mergeEventIntoCandidate')) return null;
       const row = byId(state.candidates, candidate.id);
       if (!row) return null;
       row.event_count = (candidate.event_count ?? row.event_count ?? 1) + 1;
@@ -290,6 +344,7 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       return true;
     },
     async updateCandidate(id, patch) {
+      if (scriptedToFail('updateCandidate')) return null;
       const row = byId(state.candidates, id);
       if (!row) return null;
       Object.assign(row, patch, { updated_at: now().toISOString() });
@@ -312,12 +367,22 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
 
   const actions = {
     async recordAction(action) {
+      // The real repo returns null on a unique violation (the partial unique
+      // indexes in migrations/0001_loop_schema.sql) without inserting.
+      if (scriptedToFail('recordAction')) return null;
       const row = { id: nextId(state.actions), ...action };
       state.actions.push(row);
       return { ...row };
     },
     async hasAction(candidateId, action) {
       return state.actions.some((a) => a.candidateId === candidateId && a.action === action);
+    },
+    async getAction(candidateId, action) {
+      const matches = state.actions.filter((a) => a.candidateId === candidateId && a.action === action);
+      const row = matches[matches.length - 1];
+      // Same projection shape as the real repo: `slackTs` is the argument
+      // name, `slack_ts` is the column the caller reads back.
+      return row ? { ...row, slack_ts: row.slackTs ?? row.slack_ts ?? null } : null;
     },
   };
 
@@ -348,5 +413,5 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
     },
   };
 
-  return { state, events, candidates, actions, runs };
+  return { state, events, candidates, actions, runs, failNext, pendingFailures };
 }

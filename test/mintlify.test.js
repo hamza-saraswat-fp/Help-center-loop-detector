@@ -239,3 +239,37 @@ test('search joins text content items and parses them on success', async () => {
   assert.equal(results[0].title, 'Recurring Invoices');
   assert.equal(results[0].url, 'https://help.fieldpulse.com/a');
 });
+
+// --- final review: M4, availability is observable --------------------------
+
+test('isAvailable is false before connect and after a failed connect', async () => {
+  const client = createMintlifyClient({
+    url: 'https://example.invalid/mcp',
+    clientFactory: () => ({
+      client: {
+        connect: async () => {
+          throw new Error('refused');
+        },
+      },
+      transport: {},
+    }),
+  });
+
+  assert.equal(client.isAvailable(), false);
+  await client.connect({ timeoutMs: 50 });
+  assert.equal(client.isAvailable(), false);
+});
+
+test('isAvailable is true once a search tool is discovered, and false again after close', async () => {
+  const fake = makeFakeClient({ listToolsImpl: () => ({ tools: [{ name: 'search_docs' }] }) });
+  const client = createMintlifyClient({
+    url: 'https://example.com/mcp',
+    clientFactory: () => ({ client: fake.client, transport: fake.transport }),
+  });
+
+  await client.connect();
+  assert.equal(client.isAvailable(), true);
+
+  await client.close();
+  assert.equal(client.isAvailable(), false);
+});

@@ -269,3 +269,75 @@ test('addPromptUse records the gap_check slot when run inside a trace scope', as
     assert.deepEqual(trace.prompts.gap_check, { version: '1.0.0', model: 'test/model' });
   });
 });
+
+// --- final review: I3, the NOT NULL paraphrase ------------------------------
+
+test('a reply with no question_paraphrase falls back to the question, capped at 200 chars', async () => {
+  const index = buildIndex();
+  const question = `Why does ${'a'.repeat(300)} happen?`;
+  const runCheck = createRunCheck(
+    baseDeps({
+      callModel: fakeModel(JSON.stringify({ verdict: 'MISSING', destination: 'help_center', claims: [] })),
+    }),
+  );
+
+  const result = await runCheck(juju({ question, truth_kind: 'none' }), index);
+
+  assert.equal(result.question_paraphrase, question.slice(0, 200));
+  assert.equal(result.question_paraphrase.length, 200);
+});
+
+test('a reply with a question_paraphrase keeps the model\'s own wording', async () => {
+  const index = buildIndex();
+  const runCheck = createRunCheck(
+    baseDeps({
+      callModel: fakeModel(
+        JSON.stringify({
+          verdict: 'MISSING',
+          destination: 'help_center',
+          question_paraphrase: 'How do tags work?',
+          claims: [],
+        }),
+      ),
+    }),
+  );
+
+  const result = await runCheck(juju({ question: 'something else entirely' }), index);
+
+  assert.equal(result.question_paraphrase, 'How do tags work?');
+});
+
+// --- final review: M4, the mintlify query's skipped flag --------------------
+
+test('an unavailable Mintlify client marks its query entry skipped', async () => {
+  const index = buildIndex();
+  const runCheck = createRunCheck(baseDeps({ mintlifyAvailable: false }));
+
+  const result = await runCheck(juju({ question: 'How do tags work?' }), index);
+
+  const mintlifyQuery = result.evidence.queries.find((q) => q.kind === 'mintlify');
+  assert.equal(mintlifyQuery.skipped, true);
+});
+
+test('an available Mintlify client leaves its query entry counted', async () => {
+  const index = buildIndex();
+  const runCheck = createRunCheck(baseDeps());
+
+  const result = await runCheck(juju({ question: 'How do tags work?' }), index);
+
+  const mintlifyQuery = result.evidence.queries.find((q) => q.kind === 'mintlify');
+  assert.equal(mintlifyQuery.skipped, undefined);
+});
+
+test('mintlifyAvailable can be a thunk read per check', async () => {
+  const index = buildIndex();
+  let connected = true;
+  const runCheck = createRunCheck(baseDeps({ mintlifyAvailable: () => connected }));
+
+  const first = await runCheck(juju({ question: 'How do tags work?' }), index);
+  connected = false;
+  const second = await runCheck(juju({ question: 'How do tags work?' }), index);
+
+  assert.equal(first.evidence.queries.find((q) => q.kind === 'mintlify').skipped, undefined);
+  assert.equal(second.evidence.queries.find((q) => q.kind === 'mintlify').skipped, true);
+});

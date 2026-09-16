@@ -299,3 +299,62 @@ test('pollPrs: sends the required headers (Accept, User-Agent)', async () => {
   assert.equal(calls[0].opts.headers['User-Agent'], 'help-center-loop');
   assert.ok(calls[0].url.includes('repos/org/repo/pulls'));
 });
+
+// --- final review: I11, the duplicate-action guard --------------------------
+
+test('pollPrs: a duplicate pr_opened (recordAction returns null) leaves the status alone', async () => {
+  const pr = {
+    number: 1,
+    title: 'Docs: candidate #5 fix',
+    body: '',
+    state: 'open',
+    merged_at: null,
+    updated_at: RECENT,
+    html_url: 'https://github.com/org/repo/pull/1',
+    user: { login: 'alice' },
+  };
+  const { fetchImpl } = fakeFetch([pr]);
+  const repos = fakeRepos({ seed: { candidates: [{ id: 5, status: 'posted' }] } });
+  repos.failNext('recordAction');
+  const { pollPrs } = createPrPoller({ fetchImpl, now: () => NOW });
+
+  const result = await pollPrs({
+    mode: 'live',
+    env: fakeEnv(),
+    candidates: repos.candidates,
+    actions: repos.actions,
+  });
+
+  assert.deepEqual(repos.pendingFailures(), [], 'the scripted recordAction failure was never reached');
+  assert.equal(result.pr_open, 0);
+  assert.equal(repos.state.candidates[0].status, 'posted', 'status moved on a duplicate action');
+  assert.equal(repos.state.actions.length, 0);
+});
+
+test('pollPrs: a duplicate merged action leaves the status alone', async () => {
+  const pr = {
+    number: 2,
+    title: 'Docs: candidate #5 fix',
+    body: '',
+    state: 'closed',
+    merged_at: RECENT,
+    updated_at: RECENT,
+    html_url: 'https://github.com/org/repo/pull/2',
+    user: { login: 'alice' },
+  };
+  const { fetchImpl } = fakeFetch([pr]);
+  const repos = fakeRepos({ seed: { candidates: [{ id: 5, status: 'pr_open' }] } });
+  repos.failNext('recordAction');
+  const { pollPrs } = createPrPoller({ fetchImpl, now: () => NOW });
+
+  const result = await pollPrs({
+    mode: 'live',
+    env: fakeEnv(),
+    candidates: repos.candidates,
+    actions: repos.actions,
+  });
+
+  assert.deepEqual(repos.pendingFailures(), [], 'the scripted recordAction failure was never reached');
+  assert.equal(result.merged, 0);
+  assert.equal(repos.state.candidates[0].status, 'pr_open');
+});

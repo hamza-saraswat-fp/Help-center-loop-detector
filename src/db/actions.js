@@ -68,7 +68,29 @@ export function createActionsRepo({ client }) {
     }
   }
 
-  return { recordAction, hasAction };
+  // The repair path's companion to `hasAction`: when a previous run recorded
+  // the action but died before writing the candidate's status, this is where
+  // the Slack coordinates of the card it posted still live. Newest first,
+  // because `thread_reply` is not covered by the unique index.
+  async function getAction(candidateId, action) {
+    try {
+      const { data, error } = await client
+        .from('gap_actions')
+        .select('id, candidate_id, action, actor, slack_ts, pr_url, article_url, note, at')
+        .eq('candidate_id', candidateId)
+        .eq('action', action)
+        .order('at', { ascending: false })
+        .limit(1);
+
+      if (error) throw new Error(error.message);
+      return data?.[0] ?? null;
+    } catch (err) {
+      logError('db', `getAction(candidate=${candidateId}, action=${action}) failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  return { recordAction, hasAction, getAction };
 }
 
 let defaultRepo = null;

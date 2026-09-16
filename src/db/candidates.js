@@ -32,7 +32,14 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
       const cutoff = new Date(now().getTime() - days * DAY_MS).toISOString();
       const { data, error } = await client
         .from('gap_candidates')
-        .select('id, fingerprint_terms, status, last_seen, event_count, priority, needs_answer')
+        // Wider than the match itself needs: this row is what run.js's
+        // duplicate path falls back to when `mergeEventIntoCandidate` fails,
+        // and it reads verdict (to recompute priority), slack_ts and
+        // slack_channel (to reply in the card's thread) off it.
+        .select(
+          'id, fingerprint_terms, status, last_seen, event_count, priority, needs_answer, ' +
+            'verdict, slack_ts, slack_channel, category, question_paraphrase',
+        )
         .eq('category', category)
         .gte('last_seen', cutoff);
 

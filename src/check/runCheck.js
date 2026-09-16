@@ -59,9 +59,15 @@ function articleFromDoc(doc) {
 }
 
 /**
+ * `mintlifyAvailable` is a boolean, or a function read per check, saying
+ * whether this run's Mintlify client actually connected. `searchMintlify`
+ * returns [] both when it found nothing and when the client was unavailable,
+ * and the card's evidence line counts query entries: without this the line
+ * claims a Mintlify search on every card of a run where the MCP was down.
  * @param {{getActivePrompt?: Function, callModel?: Function, searchMintlify?: Function,
  *   corroborate?: Function, categoryMap?: object, expansionTable?: string[][], now?: () => Date,
- *   topRead?: number, topK?: number, mintlifyTimeoutMs?: number}} [deps]
+ *   topRead?: number, topK?: number, mintlifyTimeoutMs?: number,
+ *   mintlifyAvailable?: boolean | (() => boolean)}} [deps]
  * @returns {(event: object, index: import('../docs/index.js').DocsIndex) => Promise<object>}
  */
 export function createRunCheck({
@@ -75,6 +81,7 @@ export function createRunCheck({
   topRead = 10,
   topK = 12,
   mintlifyTimeoutMs = 8000,
+  mintlifyAvailable = true,
 } = {}) {
   void now; // reserved: nothing in this stage needs a clock yet
 
@@ -120,6 +127,10 @@ export function createRunCheck({
         );
       }
 
+      // Read here rather than at build time: run.js builds the check before it
+      // connects the client.
+      const mintlifyUp = typeof mintlifyAvailable === 'function' ? mintlifyAvailable() : mintlifyAvailable;
+
       queries = [
         { kind: 'question', terms: questionTerms },
         answerTerms.length > 0
@@ -128,7 +139,9 @@ export function createRunCheck({
         categoryDir
           ? { kind: 'category', dir: categoryDir, terms: uniquePreservingOrder([...questionTerms, ...answerTerms]) }
           : { kind: 'category', dir: categoryDir, terms: [], skipped: true },
-        { kind: 'mintlify', query: event.question },
+        mintlifyUp
+          ? { kind: 'mintlify', query: event.question }
+          : { kind: 'mintlify', query: event.question, skipped: true },
       ];
 
       lexicalTop = [...lexicalHits.values()]
@@ -229,6 +242,17 @@ export function createRunCheck({
     const parsed = extractVerdict(modelResult.text);
     if (!parsed) throw new CheckFailed('parse', new Error('no parsable verdict'));
     const result = applyRetrievalRules(parsed, { index, citedPaths });
+
+    // `gap_candidates.question_paraphrase` is NOT NULL. A reply that omits it
+    // would fail the insert, and a failed insert leaves the event unprocessed
+    // -- so without this the same event buys one model call every run, for as
+    // long as the model keeps omitting the field. The raw question is a worse
+    // paraphrase than the model's, but it is a true one, and 200 chars is well
+    // inside what the card renders.
+    if (!result.question_paraphrase) {
+      const fallback = String(event.question ?? '').trim().slice(0, 200);
+      if (fallback) result.question_paraphrase = fallback;
+    }
 
     // Step 10: assemble the CheckResult.
     let targetArticleUrl = null;

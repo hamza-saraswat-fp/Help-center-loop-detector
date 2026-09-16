@@ -239,6 +239,43 @@ test('findNearDuplicate: computes jaccard in JS and respects the threshold', asy
   assert.equal(result.id, 1);
 });
 
+// --- final review: I8, the near-duplicate projection ------------------------
+// `existing` from this query is what run.js's duplicate path falls back to
+// when `mergeEventIntoCandidate` fails, and it reads verdict, slack_ts and
+// slack_channel off it. A narrow projection made those undefined.
+test('findNearDuplicate: projects the columns the duplicate path reads', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_candidates.select': {
+      data: [{ id: 1, fingerprint_terms: ['add', 'team', 'member'], last_seen: '2026-09-10T00:00:00.000Z' }],
+      error: null,
+    },
+  });
+  const candidates = createCandidatesRepo({ client, now });
+
+  await candidates.findNearDuplicate('team', ['add', 'team', 'member']);
+
+  const projection = calls[0].select;
+  for (const column of [
+    'id',
+    'fingerprint_terms',
+    'status',
+    'last_seen',
+    'event_count',
+    'priority',
+    'needs_answer',
+    'verdict',
+    'slack_ts',
+    'slack_channel',
+    'category',
+    'question_paraphrase',
+  ]) {
+    assert.ok(
+      projection.split(',').map((c) => c.trim()).includes(column),
+      `${column} missing from the near-duplicate projection`,
+    );
+  }
+});
+
 test('findNearDuplicate: below threshold returns null', async () => {
   const { client } = fakeSupabase({
     'gap_candidates.select': {
@@ -532,6 +569,39 @@ test('hasAction: true when a matching row exists, false otherwise', async () => 
     selectCall.filters.find((f) => f.method === 'eq' && f.args[0] === 'action').args,
     ['action', 'posted']
   );
+});
+
+// --- final review: I5, getAction ------------------------------------------
+
+test('getAction: returns the newest matching row with its slack_ts', async () => {
+  const fake = fakeSupabase({
+    'gap_actions.select': { data: [{ id: 9, candidate_id: 5, action: 'posted', slack_ts: '111.222' }], error: null },
+  });
+  const repo = createActionsRepo({ client: fake.client });
+
+  const row = await repo.getAction(5, 'posted');
+
+  assert.equal(row.slack_ts, '111.222');
+  const call = fake.calls[0];
+  assert.ok(call.select.includes('slack_ts'), 'slack_ts is not in the projection');
+  assert.deepEqual(call.filters.find((f) => f.method === 'eq' && f.args[0] === 'candidate_id').args, ['candidate_id', 5]);
+  assert.deepEqual(call.filters.find((f) => f.method === 'eq' && f.args[0] === 'action').args, ['action', 'posted']);
+});
+
+test('getAction: returns null when there is no such row, and on an error', async () => {
+  const empty = fakeSupabase({ 'gap_actions.select': { data: [], error: null } });
+  assert.equal(await createActionsRepo({ client: empty.client }).getAction(5, 'posted'), null);
+
+  const broken = fakeSupabase({ 'gap_actions.select': { data: null, error: { message: 'boom' } } });
+  const originalError = console.error;
+  const errored = [];
+  console.error = (...args) => errored.push(args.join(' '));
+  try {
+    assert.equal(await createActionsRepo({ client: broken.client }).getAction(5, 'posted'), null);
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(errored.length, 1);
 });
 
 // ---------------------------------------------------------------------------

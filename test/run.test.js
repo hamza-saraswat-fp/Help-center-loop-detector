@@ -1274,3 +1274,355 @@ test('a re-check keeps the priority the whole linked history earns, and last_see
   assert.equal(candidate.needs_answer, false);
   assert.equal(repos.state.events[1].outcome, 'candidate');
 });
+
+// --- final review: C1, secret redaction ------------------------------------
+
+test('a clone failure carrying a token is redacted in the log line and in loop_runs.errors', async () => {
+  const token = 'ghp_SUPERSECRET1234567890';
+  const { run, repos } = harness({
+    ensureDocsClone: async () => {
+      throw new Error(`Command failed: git clone https://x-access-token:${token}@github.com/acme/docs.git`);
+    },
+  });
+
+  const { exitCode, stats } = await run(args());
+
+  assert.equal(exitCode, 1);
+  assert.ok(!JSON.stringify(stats.errors).includes(token), 'the token reached stats.errors');
+  assert.ok(stats.errors[0].message.includes('x-access-token:***@'));
+  const runRow = repos.state.runs[0];
+  assert.ok(!JSON.stringify(runRow.errors).includes(token), 'the token reached the loop_runs row');
+});
+
+test('the source-failure Slack alert redacts a connection string password', async () => {
+  const { run, poster } = harness({
+    rows: { juju: new Error('connect ECONNREFUSED postgresql://loop:hunter2@db.example.com:5432/juju') },
+    seed: {
+      runs: [
+        { id: 1, mode: 'live', started_at: '2026-09-16T10:00:00.000Z', finished_at: '2026-09-16T10:01:00.000Z', errors: [{ lane: 'source', source: 'juju', message: 'down' }] },
+        { id: 2, mode: 'live', started_at: '2026-09-16T11:00:00.000Z', finished_at: '2026-09-16T11:01:00.000Z', errors: [{ lane: 'source', source: 'juju', message: 'down' }] },
+      ],
+    },
+  });
+
+  const { stats } = await run(args());
+
+  const alert = poster.posts.find((p) => p.card.text.startsWith('Source juju has failed'));
+  assert.ok(alert, 'no source-failure alert posted');
+  assert.ok(!alert.card.text.includes('hunter2'), 'the password reached Slack');
+  assert.ok(alert.card.text.includes('loop:***@db.example.com'));
+  assert.ok(!JSON.stringify(stats.errors).includes('hunter2'));
+});
+
+// --- final review: I11, the post-lane recordAction guard --------------------
+
+test('a candidate whose posted action was already recorded is not left at new', async () => {
+  const { run, repos, poster } = harness({ rows: { juju: [JUJU_ROWS[1]] } });
+  repos.failNext('recordAction');
+
+  const { stats } = await run(args());
+
+  assert.equal(poster.posts.length, 1, 'the card still went out');
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.status, 'posted');
+  assert.equal(candidate.slack_ts, 'ts-1', 'the Slack coordinates were still written');
+  assert.equal(candidate.slack_channel, 'C-GAPS');
+  assert.equal(stats.cards_posted, 1);
+});
+
+// --- final review: I3, a failed candidate insert spends the check budget ----
+
+test('a failed candidate insert bumps the check attempts instead of re-checking forever', async () => {
+  const { run, repos, runCheck } = harness({ rows: { juju: [JUJU_ROWS[1]] } });
+  repos.failNext('insertCandidate');
+
+  await run(args());
+
+  assert.equal(repos.state.candidates.length, 0, 'nothing was written');
+  const event = repos.state.events[0];
+  assert.equal(event.processed_at, null, 'the event is still pending a retry');
+  assert.equal(event.detail._check_attempts, 1);
+  assert.equal(runCheck.seen.length, 1);
+});
+
+test('three failed candidate inserts mark the event check_failed and stop the spend', async () => {
+  const { run, repos } = harness({ rows: { juju: [JUJU_ROWS[1]] } });
+  repos.failNext('insertCandidate', 3);
+
+  await run(args({ skipPoll: true }));
+  await run(args({ skipPoll: true }));
+  await run(args({ skipPoll: true }));
+
+  const event = repos.state.events[0];
+  assert.equal(event.detail._check_attempts, 3);
+  assert.equal(event.outcome, 'check_failed');
+  assert.ok(event.processed_at, 'the event is closed out rather than re-checked next run');
+});
+
+// --- final review: I4, an index failure closes the ledger -------------------
+
+test('a docs index failure records the error, closes the run row, and exits 1', async () => {
+  const { run, repos, poster, sourceReader, mintlify } = harness({
+    rows: { juju: [JUJU_ROWS[1]] },
+    buildDocsIndex: () => {
+      throw new Error('EACCES reading docs.json');
+    },
+  });
+
+  const { exitCode, stats } = await run(args());
+
+  assert.equal(exitCode, 1);
+  assert.equal(stats.errors.length, 1);
+  assert.equal(stats.errors[0].lane, 'index');
+  assert.match(stats.errors[0].message, /EACCES/);
+
+  const runRow = repos.state.runs[0];
+  assert.ok(runRow.finished_at, 'the loop_runs row was left open');
+  assert.equal(runRow.errors.length, 1);
+
+  assert.equal(poster.posts.length, 0, 'nothing was posted');
+  assert.equal(repos.state.candidates.length, 0);
+  assert.equal(sourceReader.calls.length, 0, 'no source was queried');
+  assert.equal(mintlify.closed, 1, 'the Mintlify client was still closed');
+  assert.equal(sourceReader.closed, 1, 'the source pools were still closed');
+});
+
+// --- final review: I5, the repair branch restores the Slack coordinates -----
+
+test('repairing a candidate that already has a posted action restores slack_ts and channel', async () => {
+  const { run, repos, poster } = harness({
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          status: 'new',
+          needs_answer: false,
+          category: 'using-fieldpulse',
+          destination: 'help_center',
+          verdict: 'INCORRECT',
+          question_paraphrase: 'Does the tag block scheduling?',
+          created_at: '2026-09-16T09:00:00.000Z',
+          slack_ts: null,
+          slack_channel: null,
+        },
+      ],
+    },
+  });
+  // The crash this repairs: recordAction landed, updateCandidate did not.
+  await repos.actions.recordAction({ candidateId: 1, action: 'posted', slackTs: '1726480000.000100' });
+
+  await run(args());
+
+  assert.equal(poster.posts.length, 0, 'the card must not go out a second time');
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.status, 'posted');
+  assert.equal(candidate.slack_ts, '1726480000.000100', 'the reactions poller can never see this candidate');
+  assert.equal(candidate.slack_channel, 'C-GAPS');
+});
+
+// --- final review: I8, a failed merge must not null the priority ------------
+
+test('a near-duplicate whose merge fails keeps a real priority and still replies', async () => {
+  const row = JUJU_ROWS[1];
+  const fp = fingerprintFor(row, 'juju');
+  const { run, repos, poster } = harness({
+    rows: { juju: [row] },
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          // A different hash, the same terms: findByFingerprint misses and
+          // findNearDuplicate is what matches, so `existing` is the narrow
+          // projection rather than a full row.
+          fingerprint: 'fp-reworded',
+          fingerprint_terms: fp.terms,
+          category: fp.category,
+          destination: 'help_center',
+          verdict: 'MISSING',
+          priority: 'P1',
+          status: 'posted',
+          slack_channel: 'C-GAPS',
+          slack_ts: 'ts-old',
+          question_paraphrase: 'Can jobs be bulk-reassigned?',
+          needs_answer: false,
+          event_count: 1,
+          first_seen: '2026-09-01T00:00:00.000Z',
+          last_seen: '2026-09-01T00:00:00.000Z',
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+  repos.failNext('mergeEventIntoCandidate');
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.duplicates, 1);
+  const candidate = repos.state.candidates[0];
+  assert.ok(candidate.priority, 'the failed merge nulled a real priority');
+  assert.equal(poster.replies.length, 1, 'the thread reply still went to the original card');
+  assert.equal(poster.replies[0].threadTs, 'ts-old');
+});
+
+test('a near-duplicate with no verdict yet leaves its priority alone', async () => {
+  const row = JUJU_ROWS[1];
+  const fp = fingerprintFor(row, 'juju');
+  const { run, repos } = harness({
+    rows: { juju: [row] },
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-reworded',
+          fingerprint_terms: fp.terms,
+          category: fp.category,
+          destination: 'none',
+          verdict: null,
+          priority: 'P2',
+          status: 'logged',
+          slack_ts: null,
+          slack_channel: null,
+          question_paraphrase: '[question] data lookup',
+          needs_answer: false,
+          event_count: 1,
+          first_seen: '2026-09-01T00:00:00.000Z',
+          last_seen: '2026-09-01T00:00:00.000Z',
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+
+  await run(args());
+
+  assert.equal(repos.state.candidates[0].priority, 'P2');
+});
+
+// --- final review: I9, the ONYX_MODE=live upgrade path ---------------------
+
+test('onyxMode live upgrades an unanswered event to onyx_verified', async () => {
+  const { run, repos } = harness({
+    env: { onyxMode: 'live' },
+    rows: { juju: [JUJU_ROWS[2]] },
+    script: {
+      default: checkResult({
+        verdict: 'MISSING',
+        evidence: {
+          ...checkResult().evidence,
+          onyx: {
+            mode: 'live',
+            hits: [{ doc_set: 'verified_qa', title: 'Tax rates', link: 'https://onyx.example/1' }],
+          },
+        },
+      }),
+    },
+  });
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.candidates_new, 1);
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.truth_kind, 'onyx_verified', 'a verified_qa hit did not upgrade the truth kind');
+  assert.equal(candidate.needs_answer, false, 'a corroborated answer must not ping an owner');
+});
+
+test('onyxMode off leaves the truth kind alone even with onyx hits present', async () => {
+  const { run, repos } = harness({
+    rows: { juju: [JUJU_ROWS[2]] },
+    script: {
+      default: checkResult({
+        verdict: 'MISSING',
+        evidence: {
+          ...checkResult().evidence,
+          onyx: { mode: 'shadow', hits: [{ doc_set: 'verified_qa', title: 'Tax rates' }] },
+        },
+      }),
+    },
+  });
+
+  await run(args());
+
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.truth_kind, 'none');
+  assert.equal(candidate.needs_answer, true);
+});
+
+// --- round 2: a failed re-check update spends the check budget too ----------
+
+function recheckHarness() {
+  const answered = {
+    ...JUJU_ROWS[0],
+    truth_answer: 'Convert copies the estimate total; edits after the convert are not synced.',
+    truth_kind: 'human',
+    needs_answer: false,
+    pinged_at: null,
+  };
+  return harness({
+    rows: { juju: [answered] },
+    script: { default: checkResult({ verdict: 'MISSING' }) },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'juju',
+          source_event_id: '5001',
+          occurred_at: JUJU_ROWS[0].occurred_at,
+          question: JUJU_ROWS[0].question,
+          truth_kind: 'none',
+          detail: {},
+          processed_at: null,
+          outcome: null,
+          candidate_id: 1,
+        },
+      ],
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-original',
+          fingerprint_terms: ['invoice'],
+          category: 'using-fieldpulse',
+          destination: 'help_center',
+          verdict: 'UNFINDABLE',
+          priority: null,
+          status: 'logged',
+          truth_kind: 'none',
+          needs_answer: true,
+          question_paraphrase: 'Why does the invoice total differ?',
+          event_count: 1,
+          first_seen: '2026-09-10T14:22:00.000Z',
+          last_seen: '2026-09-10T14:22:00.000Z',
+          created_at: '2026-09-10T14:22:00.000Z',
+        },
+      ],
+    },
+  });
+}
+
+test('a failed re-check update bumps the check attempts instead of re-checking forever', async () => {
+  const { run, repos, runCheck } = recheckHarness();
+  repos.failNext('updateCandidate');
+
+  await run(args());
+
+  assert.deepEqual(repos.pendingFailures(), [], 'the scripted updateCandidate failure was never reached');
+  assert.deepEqual(runCheck.seen, ['5001']);
+  const event = repos.state.events[0];
+  assert.equal(event.processed_at, null, 'the event is still pending a retry');
+  assert.equal(event.detail._check_attempts, 1);
+  assert.equal(repos.state.candidates[0].verdict, 'UNFINDABLE', 'nothing was written');
+});
+
+test('three failed re-check updates mark the event check_failed and stop the spend', async () => {
+  const { run, repos } = recheckHarness();
+  repos.failNext('updateCandidate', 3);
+
+  await run(args());
+  await run(args());
+  await run(args());
+
+  assert.deepEqual(repos.pendingFailures(), []);
+  const event = repos.state.events[0];
+  assert.equal(event.detail._check_attempts, 3);
+  assert.equal(event.outcome, 'check_failed');
+  assert.ok(event.processed_at, 'the event is closed out rather than re-checked next run');
+});

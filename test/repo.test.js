@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ensureDocsClone, listMdxFiles } from '../src/docs/repo.js';
+import { defaultExec, ensureDocsClone, listMdxFiles } from '../src/docs/repo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, 'fixtures', 'docs');
@@ -143,4 +143,36 @@ test('a failing exec rejects ensureDocsClone', async () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- defaultExec redaction (final review, Critical 1) -----------------------
+// The clone argv carries `https://x-access-token:<PAT>@github.com/...`, and
+// Node's own execFile error message is `Command failed: <the whole argv>`.
+// `defaultExec` must never hand that message on: run.js logs it and writes it
+// into `loop_runs.errors`.
+
+test('defaultExec rejects with a message that redacts a token in the argv', async () => {
+  const token = 'ghp_SUPERSECRET1234567890';
+  const url = `https://x-access-token:${token}@github.com/acme/docs.git`;
+
+  await assert.rejects(
+    () =>
+      defaultExec(process.execPath, [
+        '-e',
+        'process.stderr.write(`fatal: could not read from ${process.argv[1]}`); process.exit(128);',
+        url,
+      ]),
+    (err) => {
+      assert.ok(!err.message.includes(token), `token leaked into: ${err.message}`);
+      assert.ok(err.message.includes('x-access-token:***@'), `no redaction marker in: ${err.message}`);
+      assert.ok(err.message.includes('128'), `no exit code in: ${err.message}`);
+      assert.ok(!err.stderr.includes(token));
+      return true;
+    },
+  );
+});
+
+test('defaultExec resolves with stdout on success', async () => {
+  const { stdout } = await defaultExec(process.execPath, ['-e', 'process.stdout.write("ok")']);
+  assert.equal(stdout, 'ok');
 });

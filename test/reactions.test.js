@@ -141,7 +141,7 @@ test('pollReactions: a duplicate action (recordAction returns null) does not cha
   const repos = fakeRepos({
     seed: { candidates: [{ id: 1, status: 'posted', slack_channel: 'C1', slack_ts: '111.1' }] },
   });
-  repos.actions.recordAction = async () => null;
+  repos.failNext('recordAction');
   const { pollReactions } = createReactionPoller({ client });
 
   const result = await pollReactions({
@@ -153,6 +153,7 @@ test('pollReactions: a duplicate action (recordAction returns null) does not cha
 
   assert.equal(result.adopted, 0);
   assert.equal(repos.state.candidates[0].status, 'posted');
+  assert.equal(repos.state.actions.length, 0, 'the duplicate insert wrote nothing');
 });
 
 test('pollReactions: a client error on one candidate does not stop the others', async () => {

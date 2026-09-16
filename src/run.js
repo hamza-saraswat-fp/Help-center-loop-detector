@@ -12,9 +12,9 @@
 //
 //   A lane that fails degrades; it does not end the run. A dead source, a
 //   failed Slack post, a check that throws -- each is recorded and the run
-//   carries on. The single exception is the docs clone: without it there is
-//   nothing to check against, so the run finishes with a clone error and
-//   exits 1.
+//   carries on. The single exception is the docs corpus: without a clone and
+//   an index there is nothing to check against, so the run finishes with that
+//   error recorded and exits 1.
 //
 //   The ledger is always closed. `finishRun`, `mintlify.close()` and
 //   `closeSourcePools()` live in a `finally`, so a crash mid-run still leaves
@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { log, warn, error as logError } from './log.js';
+import { redactSecrets } from './util/redact.js';
 import { normalizeEvent } from './sources/adapter.js';
 import { holdUntil } from './prefilter/hold.js';
 import { destinationShortcut, loadShortcutRules } from './prefilter/shortcut.js';
@@ -68,8 +69,13 @@ const SUMMARY_MAX_ROWS = 500;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Every error message in this file ends up in a log line and in
+// `loop_runs.errors`, and plenty of them are written by libraries that echo
+// the credential they were handed (execFile's argv, pg's connection string,
+// the Slack SDK's token). The call sites that know they hold a secret redact
+// it themselves; this is the backstop that covers the ones that don't.
 function messageOf(err) {
-  return String(err?.message ?? err);
+  return redactSecrets(String(err?.message ?? err));
 }
 
 /**
@@ -207,10 +213,38 @@ export function createRun({
     }
 
     stats.docs_sha = docs.sha;
-    const index = buildDocsIndex(docs.dir, docs.sha);
-    log(LANE, `docs sha=${docs.sha} articles=${index.byPath.size}`);
 
     try {
+      // Inside the try, not above it: `startRun` has already opened a
+      // loop_runs row, so an unreadable .mdx or a permissions error here has
+      // to close that row rather than throw out of run() and leave it open
+      // forever. Like the clone, there is nothing to check against without an
+      // index, so this ends the run -- but through the finally, with the
+      // error recorded.
+      let index;
+      try {
+        index = buildDocsIndex(docs.dir, docs.sha);
+      } catch (err) {
+        const indexError = { lane: 'index', message: messageOf(err) };
+        logError(LANE, `docs index failed, abandoning the run: ${indexError.message}`);
+        stats.errors.push(indexError);
+        return { exitCode: 1, stats };
+      }
+      log(LANE, `docs sha=${docs.sha} articles=${index.byPath.size}`);
+
+      // Onyx can promote an unverified answer to a corroborated one, but only
+      // on the ladder's top rung -- in `shadow` it is observed and recorded,
+      // never acted on. Resolved once per run rather than once per event: a
+      // dynamic import inside the per-event loop would land a module
+      // resolution failure in the generic per-event catch and silently drop
+      // the event. It is not a top-of-file import because src/onyx.js builds
+      // its default client from the env singleton at import time, and
+      // importing src/run.js must never touch src/config/env.js.
+      let upgradedTruthKind = (truthKind) => truthKind;
+      if (env.onyxMode === 'live') {
+        ({ upgradedTruthKind } = await import('./onyx.js'));
+      }
+
       // Null means Mintlify is unavailable this run; `search` then returns []
       // and the check runs on the local lexical index alone.
       await mintlify.connect();
@@ -263,7 +297,10 @@ export function createRun({
           const failures = await runs.consecutiveSourceFailures(source);
           if (failures >= 2 && channel) {
             await poster.postCard(channel, {
-              text: `Source ${source} has failed ${failures} runs in a row: ${message}`,
+              // `message` is already redacted by `messageOf`; redacting the
+              // assembled line as well keeps the guarantee local to the call
+              // that leaves the process.
+              text: redactSecrets(`Source ${source} has failed ${failures} runs in a row: ${message}`),
               blocks: [],
             });
           }
@@ -279,6 +316,19 @@ export function createRun({
       // dry_run has no gap_candidates to dedup against, so it dedups against
       // itself: the same question twice in one pull is still only one gap.
       const seenFingerprints = new Set();
+
+      // A write that failed leaves the event unprocessed, so it comes back next
+      // run and buys another model call. Three of those and the loop gives up
+      // on it, exactly as it does on a failing check: a NOT NULL or CHECK
+      // violation in this row is not going to start working, and an hourly
+      // model call for it is pure spend.
+      async function spendCheckAttempt(event, label, what) {
+        const attempts = await events.bumpCheckAttempts(event.id);
+        if (attempts >= MAX_CHECK_ATTEMPTS) {
+          log(LANE, `giving up on ${label} after ${attempts} ${what}`);
+          await events.markProcessed(event.id, 'check_failed');
+        }
+      }
 
       // One event, start to finish. Split out so the loop below can put a
       // single guard around it.
@@ -361,13 +411,17 @@ export function createRun({
           // has been seen, so it is recomputed over the whole linked
           // history every time one more event lands on it.
           const linked = await candidates.linkedEvents(existing.id);
-          const priority = computePriority({
-            verdict: merged.verdict ?? existing.verdict,
-            events: linked,
-            now: startedAt,
-          });
-          if (priority !== (merged.priority ?? null)) {
-            await candidates.updateCandidate(existing.id, { priority });
+          // Only when a verdict is actually known. `merged` falls back to
+          // `existing` when the merge failed, and a candidate that has not
+          // been checked yet has no verdict at all -- in both cases
+          // computePriority would return null, and writing that null would
+          // wipe a real priority off the row.
+          const verdict = merged.verdict ?? existing.verdict ?? null;
+          if (verdict) {
+            const priority = computePriority({ verdict, events: linked, now: startedAt });
+            if (priority !== (merged.priority ?? null)) {
+              await candidates.updateCandidate(existing.id, { priority });
+            }
           }
 
           // `existing` may be a near-duplicate row, which carries no
@@ -426,15 +480,11 @@ export function createRun({
         const status =
           result.destination !== 'help_center' || LOGGED_VERDICTS.has(result.verdict) ? 'logged' : 'new';
 
-        // Onyx can promote an unverified answer to a corroborated one, but
-        // only on the ladder's top rung -- in `shadow` it is observed and
-        // recorded, never acted on. Imported here rather than at the top of
-        // the file because src/onyx.js builds its default client from the
-        // env singleton at import time.
+        // `upgradedTruthKind` is the identity function unless ONYX_MODE is
+        // `live` (resolved once at the top of the run).
         let truthKind = event.truth_kind;
         const onyxHits = result.evidence?.onyx?.hits;
-        if (env.onyxMode === 'live' && Array.isArray(onyxHits) && onyxHits.length > 0) {
-          const { upgradedTruthKind } = await import('./onyx.js');
+        if (Array.isArray(onyxHits) && onyxHits.length > 0) {
           truthKind = upgradedTruthKind(truthKind, onyxHits);
         }
 
@@ -496,6 +546,7 @@ export function createRun({
           const updated = await candidates.updateCandidate(recheckCandidateId, patch);
           if (!updated) {
             logError(LANE, `could not update candidate #${recheckCandidateId}; leaving ${label} unprocessed`);
+            await spendCheckAttempt(event, label, 'failed candidate updates');
             return;
           }
           await events.markProcessed(event.id, 'candidate', { candidateId: recheckCandidateId });
@@ -535,6 +586,7 @@ export function createRun({
 
         if (!candidate) {
           logError(LANE, `could not record a candidate for ${label}; leaving the event unprocessed`);
+          await spendCheckAttempt(event, label, 'failed candidate writes');
           return;
         }
 
@@ -578,7 +630,18 @@ export function createRun({
           // card went out and a previous run died before it could say so.
           if (await actions.hasAction(candidate.id, action)) {
             log(LANE, `candidate #${candidate.id} already has a ${action} action; repairing its status`);
-            await candidates.updateCandidate(candidate.id, { status: 'posted' });
+            // The status alone is not the whole repair: without slack_ts and
+            // slack_channel the reactions poller skips this candidate for
+            // good, so it could never be adopted or rejected. The action row
+            // is where the card's ts survived the crash; the channel is this
+            // mode's channel, which is the one it was posted to.
+            const previous = await actions.getAction(candidate.id, action);
+            const patch = { status: 'posted' };
+            if (previous?.slack_ts) {
+              patch.slack_ts = previous.slack_ts;
+              patch.slack_channel = candidate.slack_channel ?? channel;
+            }
+            await candidates.updateCandidate(candidate.id, patch);
             continue;
           }
 
@@ -708,7 +771,11 @@ export async function run(opts = {}) {
     mintlify,
     // The check's Mintlify lane is this run's client, so the one MCP
     // connection opened at the top of the run is the one every check reuses.
-    runCheck: createRunCheck({ searchMintlify: (query, searchOpts) => mintlify.search(query, searchOpts) }),
+    runCheck: createRunCheck({
+      searchMintlify: (query, searchOpts) => mintlify.search(query, searchOpts),
+      // A thunk, not a value: this runs before the client has connected.
+      mintlifyAvailable: () => mintlify.isAvailable(),
+    }),
     events: createEventsRepo({ client }),
     candidates: createCandidatesRepo({ client }),
     actions: createActionsRepo({ client }),
