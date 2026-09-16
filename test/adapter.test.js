@@ -165,3 +165,27 @@ test('the source argument wins over row.source', () => {
   const event = normalizeEvent(row, 'sidecar');
   assert.equal(event.source, 'sidecar');
 });
+
+// --- Step 0 change 1: Sidecar team kept on the event -----------------------
+
+test('normalizeEvent keeps row.source as detail.team when it differs from the source argument (Sidecar team)', () => {
+  const row = { ...sidecarRows[0], source: 'chat_assist' };
+  const event = normalizeEvent(row, 'sidecar');
+  assert.equal(event.source, 'sidecar');
+  assert.equal(event.detail.team, 'chat_assist');
+});
+
+test('normalizeEvent does not set detail.team for Juju, whose row.source matches the source argument', () => {
+  const row = jujuRows[0];
+  assert.equal(row.source, 'juju');
+  const event = normalizeEvent(row, 'juju');
+  assert.equal('team' in event.detail, false);
+  // The row's own detail fields still come through untouched.
+  assert.equal(event.detail.escalation_type, row.detail.escalation_type);
+});
+
+test('normalizeEvent never overwrites an existing detail.team', () => {
+  const row = { ...sidecarRows[0], source: 'all', detail: { team: 'chat_assist' } };
+  const event = normalizeEvent(row, 'sidecar');
+  assert.equal(event.detail.team, 'chat_assist');
+});

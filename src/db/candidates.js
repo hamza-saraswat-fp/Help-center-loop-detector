@@ -184,7 +184,7 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
     try {
       const { data, error } = await client
         .from('gap_events')
-        .select('id, source, occurred_at, truth_kind, source_link, needs_answer')
+        .select('id, source, occurred_at, truth_kind, source_link, needs_answer, detail')
         .eq('candidate_id', candidateId)
         .order('occurred_at', { ascending: false });
 

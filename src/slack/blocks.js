@@ -12,6 +12,29 @@
 
 export const SOURCE_LABELS = { juju: 'Juju', sidecar: 'Sidecar', ava: 'Ava', email: 'Email agent' };
 
+// Sidecar's `hc_gap_events_v` runs once per team, and the team lands in
+// detail.team (src/sources/adapter.js). These are the three teams live
+// today; any other non-empty team still renders, just without a friendly
+// name.
+const SIDECAR_TEAM_LABELS = { chat_assist: 'Support', all: 'Tech Support', ai: 'AI' };
+
+/**
+ * The label for a card's Source line: `Sidecar (Support)` for team
+ * `chat_assist`, `Sidecar (Tech Support)` for `all`, `Sidecar (AI)` for
+ * `ai`, `Sidecar (<team>)` for any other non-empty team, and the plain
+ * `SOURCE_LABELS` entry (or the raw source id) when there is no team.
+ * @param {string} source
+ * @param {string|null|undefined} [team]
+ * @returns {string}
+ */
+export function sourceLabel(source, team) {
+  const base = SOURCE_LABELS[source] ?? source ?? 'unknown';
+  if (typeof team === 'string' && team.trim() !== '') {
+    return `${base} (${SIDECAR_TEAM_LABELS[team] ?? team})`;
+  }
+  return base;
+}
+
 export const TRUTH_LABELS = {
   human: 'verified by a product owner',
   onyx_verified: 'matches a verified internal answer',
@@ -114,21 +137,22 @@ function formatShortDate(value) {
  * of first appearance — which is also the order the manual's parenthetical
  * lists sources in, and matches `firstSource` (the earliest event's
  * source), used for the card's "Source:" line.
- * @param {Array<{source:string, occurred_at:string}>} linked
+ * @param {Array<{source:string, occurred_at:string, detail?:object}>} linked
  * @param {Date} [now] unused today; kept for symmetry with the other
  *   builders and in case a future "seen Nx recently" phrasing needs it.
- * @returns {{count:number, since:string|null, bySource:object, firstSource:string|null, text:string}}
+ * @returns {{count:number, since:string|null, bySource:object, firstSource:string|null, firstTeam:string|null, text:string}}
  */
 export function seenSummary(linked = [], now = new Date()) {
   void now;
   const count = linked.length;
   if (count === 0) {
-    return { count: 0, since: null, bySource: {}, firstSource: null, text: 'seen 0x' };
+    return { count: 0, since: null, bySource: {}, firstSource: null, firstTeam: null, text: 'seen 0x' };
   }
 
   const sorted = [...linked].sort((a, b) => new Date(a.occurred_at) - new Date(b.occurred_at));
   const since = formatShortDate(sorted[0].occurred_at);
   const firstSource = sorted[0].source;
+  const firstTeam = sorted[0].detail?.team ?? null;
 
   const bySource = {};
   for (const ev of sorted) {
@@ -139,7 +163,14 @@ export function seenSummary(linked = [], now = new Date()) {
     .map(([source, n]) => `${SOURCE_LABELS[source] ?? source} ${n}`)
     .join(', ');
 
-  return { count, since, bySource, firstSource, text: `seen ${count}x since ${since} (${parenthetical})` };
+  return {
+    count,
+    since,
+    bySource,
+    firstSource,
+    firstTeam,
+    text: `seen ${count}x since ${since} (${parenthetical})`,
+  };
 }
 
 function bySourceParenthetical(bySource) {
@@ -212,9 +243,8 @@ export function buildCandidateCard({ candidate, linked = [], now = new Date() })
   const lines = [];
   lines.push(`${prefix} ${candidate.question_paraphrase}`);
 
-  const sourceLabel = SOURCE_LABELS[summary.firstSource] ?? summary.firstSource ?? 'unknown';
   const truthLabel = TRUTH_LABELS[candidate.truth_kind] ?? TRUTH_LABELS.none;
-  lines.push(`Source: ${sourceLabel} · ${truthLabel} · ${summary.text}`);
+  lines.push(`Source: ${sourceLabel(summary.firstSource, summary.firstTeam)} · ${truthLabel} · ${summary.text}`);
 
   const article = articleLine(candidate);
   if (article) lines.push(article);
@@ -255,8 +285,7 @@ export function buildNeedsAnswerCard({ candidate, linked = [], owners = [], ment
   const lines = [];
   lines.push(`${prefix} ${candidate.question_paraphrase}`);
 
-  const sourceLabel = SOURCE_LABELS[summary.firstSource] ?? summary.firstSource ?? 'unknown';
-  lines.push(`Source: ${sourceLabel} · ${TRUTH_LABELS.none} · ${summary.text}`);
+  lines.push(`Source: ${sourceLabel(summary.firstSource, summary.firstTeam)} · ${TRUTH_LABELS.none} · ${summary.text}`);
 
   const article = articleLine(candidate);
   if (article) lines.push(article);
@@ -287,7 +316,7 @@ export function buildNeedsAnswerCard({ candidate, linked = [], owners = [], ment
 export function buildDuplicateReply({ candidate, linked = [], latest, now = new Date() }) {
   void candidate;
   const summary = seenSummary(linked, now);
-  const latestLabel = SOURCE_LABELS[latest?.source] ?? latest?.source ?? 'unknown';
+  const latestLabel = sourceLabel(latest?.source, latest?.detail?.team);
   const latestDate = latest?.occurred_at ? formatShortDate(latest.occurred_at) : 'unknown';
 
   const text = `Seen again: now ${summary.count}x (${bySourceParenthetical(summary.bySource)}). Latest: ${latestLabel} on ${latestDate}.`;

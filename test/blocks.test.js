@@ -7,6 +7,7 @@ import {
   SOURCE_LABELS,
   TRUTH_LABELS,
   seenSummary,
+  sourceLabel,
   buildCandidateCard,
   buildNeedsAnswerCard,
   buildDuplicateReply,
@@ -71,6 +72,45 @@ test('SOURCE_LABELS and TRUTH_LABELS are the exact required maps', () => {
     ai_verdict: "flagged by the assistant's own check",
     none: 'no verified answer yet',
   });
+});
+
+// --- Step 0 change 1: Sidecar team label -----------------------------------
+
+test('sourceLabel: the three Sidecar team names', () => {
+  assert.equal(sourceLabel('sidecar', 'chat_assist'), 'Sidecar (Support)');
+  assert.equal(sourceLabel('sidecar', 'all'), 'Sidecar (Tech Support)');
+  assert.equal(sourceLabel('sidecar', 'ai'), 'Sidecar (AI)');
+});
+
+test('sourceLabel: any other non-empty team renders as Sidecar (<team>)', () => {
+  assert.equal(sourceLabel('sidecar', 'billing_bot'), 'Sidecar (billing_bot)');
+});
+
+test('sourceLabel: plain label when there is no team', () => {
+  assert.equal(sourceLabel('sidecar', null), 'Sidecar');
+  assert.equal(sourceLabel('sidecar', undefined), 'Sidecar');
+  assert.equal(sourceLabel('sidecar', ''), 'Sidecar');
+  assert.equal(sourceLabel('juju', null), 'Juju');
+});
+
+test('sourceLabel: falls back to the raw source id when unmapped', () => {
+  assert.equal(sourceLabel('mystery-tool', null), 'mystery-tool');
+});
+
+test('buildCandidateCard: Source line shows the Sidecar team from the linked event detail', () => {
+  const candidate = baseCandidate();
+  const linked = [
+    { id: 1, source: 'sidecar', occurred_at: '2026-09-01T10:00:00Z', truth_kind: 'human', source_link: null, needs_answer: false, detail: { team: 'chat_assist' } },
+  ];
+  const card = buildCandidateCard({ candidate, linked, now: NOW });
+  assert.match(card.text, /Source: Sidecar \(Support\) ·/);
+});
+
+test('buildDuplicateReply: Latest segment shows the Sidecar team', () => {
+  const candidate = baseCandidate();
+  const latest = { source: 'sidecar', occurred_at: '2026-09-12T09:00:00Z', detail: { team: 'all' } };
+  const reply = buildDuplicateReply({ candidate, linked: linkedFixture(), latest, now: NOW });
+  assert.match(reply.text, /Latest: Sidecar \(Tech Support\) on Sep 12\./);
 });
 
 test('seenSummary counts, finds earliest date, and groups by source in chronological order', () => {
