@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import { CANT_FIND_PATTERNS, readsAsCantFind, classifyParent, selectCases, toCaseRecord } from '../src/evalset.js';
+import { CANT_FIND_PATTERNS, readsAsCantFind, classifyParent, selectCases, toCaseRecord, scrubSlack } from '../src/evalset.js';
 
 // --- readsAsCantFind ---------------------------------------------------------
 
@@ -281,4 +281,18 @@ test('scripts/build-eval-set.js is syntactically valid', () => {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const scriptPath = path.join(__dirname, '..', 'scripts', 'build-eval-set.js');
   assert.doesNotThrow(() => execFileSync(process.execPath, ['--check', scriptPath], { encoding: 'utf8' }));
+});
+
+test('scrubSlack removes user, group, and broadcast mentions and unwraps links', () => {
+  assert.equal(scrubSlack('<@U0ARRH36K60> can they accept?'), '@someone can they accept?');
+  assert.equal(scrubSlack('ping <@U012AB|hamza> and <!subteam^SAZ94GDB8|@marketing> <!here>'), 'ping @someone and @group @group');
+  assert.equal(scrubSlack('see <https://erp.intuit.com/|erp.intuit.com> or <https://x.y/z>'), 'see erp.intuit.com (https://erp.intuit.com/) or https://x.y/z');
+  assert.equal(scrubSlack(null), null);
+});
+
+test('toCaseRecord scrubs Slack markup from question and answer text', () => {
+  const rec = toCaseRecord({ question: '<@U123> is it?', answer_text: 'yes <@U456>', created_at: 'x' }, 'control', 'answered_confirmed', 1);
+  assert.equal(rec.question, '@someone is it?');
+  assert.equal(rec.answer_text, 'yes @someone');
+  assert.ok(!JSON.stringify(rec).includes('<@'));
 });

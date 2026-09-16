@@ -145,12 +145,12 @@ async function main() {
   let result = await pullAndSelect(supabase, args.from, args.to, opts);
   let widenedFrom = null;
 
-  // Sept-only windows run short on human-confirmed controls (the top-up in
-  // selectCases covers most of that, but not all of it) -- widen the pull
-  // back to Aug 1 once and re-select, rather than fail the whole run.
-  if (result.shortfall.control > 0 && args.from > WIDEN_FLOOR) {
+  // Widen before topping up: a September-only window runs short on
+  // human-confirmed controls, and unconfirmed top-ups are the last resort,
+  // not the first. Widen the pull back to Aug 1 once and re-select.
+  if (result.counts.control.confirmed < args.controls && args.from > WIDEN_FLOOR) {
     console.log(
-      `[${LANE}] only ${result.counts.control.total}/${args.controls} controls in ${args.from}..${args.to}; ` +
+      `[${LANE}] only ${result.counts.control.confirmed}/${args.controls} human-confirmed controls in ${args.from}..${args.to}; ` +
         `widening from to ${WIDEN_FLOOR}`,
     );
     widenedFrom = args.from;

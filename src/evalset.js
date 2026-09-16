@@ -246,11 +246,27 @@ export function selectCases(
  * @param {number} index 1-based, per cohort
  * @returns {object}
  */
+/**
+ * Strip Slack markup so no user id, group id, or angle-bracket link markup
+ * reaches the eval file or the model. `<@U123>` becomes `@someone`, group and
+ * broadcast mentions become `@group`, `<url|label>` becomes `label (url)`.
+ * @param {string|null|undefined} text
+ * @returns {string|null}
+ */
+export function scrubSlack(text) {
+  if (text === null || text === undefined) return null;
+  return String(text)
+    .replace(/<@[UW][A-Z0-9]+(?:\|[^>]*)?>/g, '@someone')
+    .replace(/<!(?:subteam\^[A-Z0-9]+(?:\|[^>]*)?|here|channel|everyone)>/gi, '@group')
+    .replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, '$2 ($1)')
+    .replace(/<(https?:\/\/[^>]+)>/g, '$1');
+}
+
 export function toCaseRecord(parent, cohort, kind, index) {
   const isControl = cohort === 'control';
   const prefix = isControl ? 'ctl' : 'gap';
   const case_id = `${prefix}-${String(index).padStart(3, '0')}`;
-  const answerText = isControl ? (parent.answer_text ?? null) : null;
+  const answerText = isControl ? scrubSlack(parent.answer_text ?? null) : null;
 
   return {
     case_id,
@@ -260,7 +276,7 @@ export function toCaseRecord(parent, cohort, kind, index) {
     category: kind,
     july_answer_type: null,
     july_confidence: parent.answer_confidence ?? null,
-    question: parent.question,
+    question: scrubSlack(parent.question),
     july_answer_text: answerText,
     answer_text: answerText,
     created_at: parent.created_at,
