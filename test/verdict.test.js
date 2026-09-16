@@ -146,7 +146,7 @@ test('applyRetrievalRules: NOT_A_GAP + all supported + uncited -> UNFINDABLE', (
   const index = fakeIndex([['a.mdx', { hidden: false }]]);
   const result = applyRetrievalRules(parsed, { index, citedPaths: ['/b'] });
   assert.equal(result.verdict, 'UNFINDABLE');
-  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: true, answered_by_override: false });
+  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: true, answered_by_override: false, missing_downgraded_to_edit: false });
 });
 
 test('applyRetrievalRules: NOT_A_GAP + all supported + uncited + hidden doc -> HIDDEN', () => {
@@ -157,7 +157,7 @@ test('applyRetrievalRules: NOT_A_GAP + all supported + uncited + hidden doc -> H
   const index = fakeIndex([['a.mdx', { hidden: true }]]);
   const result = applyRetrievalRules(parsed, { index, citedPaths: [] });
   assert.equal(result.verdict, 'HIDDEN');
-  assert.deepEqual(result.evidence_flags, { hidden_target: true, uncited_support: true, answered_by_override: false });
+  assert.deepEqual(result.evidence_flags, { hidden_target: true, uncited_support: true, answered_by_override: false, missing_downgraded_to_edit: false });
 });
 
 test('applyRetrievalRules: NEEDS_EDIT unchanged, evidence_flags present', () => {
@@ -165,7 +165,7 @@ test('applyRetrievalRules: NEEDS_EDIT unchanged, evidence_flags present', () => 
   const index = fakeIndex([]);
   const result = applyRetrievalRules(parsed, { index, citedPaths: [] });
   assert.equal(result.verdict, 'NEEDS_EDIT');
-  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: false, answered_by_override: false });
+  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: false, answered_by_override: false, missing_downgraded_to_edit: false });
 });
 
 test('applyRetrievalRules: claims supported but cited -> unchanged', () => {
@@ -176,7 +176,7 @@ test('applyRetrievalRules: claims supported but cited -> unchanged', () => {
   const index = fakeIndex([['a.mdx', { hidden: false }]]);
   const result = applyRetrievalRules(parsed, { index, citedPaths: ['/a'] });
   assert.equal(result.verdict, 'NOT_A_GAP');
-  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: false, answered_by_override: false });
+  assert.deepEqual(result.evidence_flags, { hidden_target: false, uncited_support: false, answered_by_override: false, missing_downgraded_to_edit: false });
 });
 
 test('applyRetrievalRules: never throws on missing index entries', () => {
@@ -227,4 +227,36 @@ test('applyRetrievalRules: NEEDS_EDIT and INCORRECT are never overridden by answ
     const r = applyRetrievalRules({ verdict, answered_by: { article_path: 'a.mdx', sentence: 'x' }, claims: [] }, { index, citedPaths: [] });
     assert.equal(r.verdict, verdict);
   }
+});
+
+test('applyRetrievalRules: MISSING with a supported claim from a known article becomes NEEDS_EDIT on that article', () => {
+  const index = fakeIndex([['offline-mode/offline-mode-overview.mdx', { hidden: false }]]);
+  const parsed = { verdict: 'MISSING', target_article_path: null, answered_by: null, claims: [
+    { claim: 'a', status: 'supported', article_path: 'offline-mode/offline-mode-overview.mdx', sentence: 's' },
+    { claim: 'b', status: 'omitted', article_path: null, sentence: null },
+  ] };
+  const r = applyRetrievalRules(parsed, { index, citedPaths: [] });
+  assert.equal(r.verdict, 'NEEDS_EDIT');
+  assert.equal(r.target_article_path, 'offline-mode/offline-mode-overview.mdx');
+  assert.equal(r.evidence_flags.missing_downgraded_to_edit, true);
+});
+
+test('applyRetrievalRules: MISSING with only omitted claims stays MISSING', () => {
+  const index = fakeIndex([['a.mdx', { hidden: false }]]);
+  const r = applyRetrievalRules({ verdict: 'MISSING', answered_by: null, claims: [{ claim: 'a', status: 'omitted', article_path: null, sentence: null }] }, { index, citedPaths: [] });
+  assert.equal(r.verdict, 'MISSING');
+  assert.equal(r.evidence_flags.missing_downgraded_to_edit, false);
+});
+
+test('applyRetrievalRules: a supported claim citing an article not in the index does not downgrade MISSING', () => {
+  const index = fakeIndex([['a.mdx', { hidden: false }]]);
+  const r = applyRetrievalRules({ verdict: 'MISSING', answered_by: null, claims: [{ claim: 'a', status: 'supported', article_path: 'ghost.mdx', sentence: 's' }] }, { index, citedPaths: [] });
+  assert.equal(r.verdict, 'MISSING');
+});
+
+test('applyRetrievalRules: MISSING keeps an explicit target when downgraded', () => {
+  const index = fakeIndex([['a.mdx', { hidden: false }], ['b.mdx', { hidden: false }]]);
+  const r = applyRetrievalRules({ verdict: 'MISSING', target_article_path: 'b.mdx', answered_by: null, claims: [{ claim: 'a', status: 'supported', article_path: 'a.mdx', sentence: 's' }] }, { index, citedPaths: [] });
+  assert.equal(r.verdict, 'NEEDS_EDIT');
+  assert.equal(r.target_article_path, 'b.mdx');
 });

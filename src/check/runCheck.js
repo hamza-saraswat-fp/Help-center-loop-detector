@@ -285,6 +285,7 @@ export function createRunCheck({
         onyx: { mode: onyx.mode, hits: onyx.hits ?? 'unavailable' },
         cited_paths: citedPaths,
         hidden_target: evidence_flags?.hidden_target ?? false,
+        rule_flags: evidence_flags ?? {},
         uncited_support: evidence_flags?.uncited_support ?? false,
         model: modelResult.model,
         prompt_version: prompt.version,
