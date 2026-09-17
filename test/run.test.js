@@ -380,7 +380,7 @@ test('a duplicate merges into the existing candidate and replies in its thread',
   assert.equal(poster.replies.length, 1);
   assert.equal(poster.replies[0].channel, 'C-GAPS');
   assert.equal(poster.replies[0].threadTs, 'ts-old');
-  assert.match(poster.replies[0].card.text, /Seen again: now 2x \(Juju 2\)/);
+  assert.match(poster.replies[0].card.text, /Seen again: now 2 times \(Juju 2\)/);
   assert.deepEqual(
     repos.state.actions.map((a) => [a.candidateId, a.action, a.slackTs]),
     [[1, 'thread_reply', 'ts-reply']],
@@ -460,14 +460,68 @@ test('a help_center INCORRECT becomes one posted card with a posted action', asy
 
   assert.equal(poster.posts.length, 1);
   assert.equal(poster.posts[0].channel, 'C-GAPS');
-  assert.match(poster.posts[0].card.text, /^\[P1 · INCORRECT\]/);
+  assert.match(poster.posts[0].card.text, /^Wrong information:/);
+
+  // Cards v2: the channel post is followed by a thread reply with the story
+  // and the fix -- two poster calls per new candidate, not one.
+  assert.equal(poster.replies.length, 1);
+  assert.equal(poster.replies[0].channel, 'C-GAPS');
+  assert.equal(poster.replies[0].threadTs, 'ts-1');
+  assert.match(poster.replies[0].card.text, /^How to fix gap/);
 
   assert.deepEqual(
     repos.state.actions.map((a) => [a.candidateId, a.action, a.slackTs]),
-    [[candidate.id, 'posted', 'ts-1']],
+    [
+      [candidate.id, 'posted', 'ts-1'],
+      [candidate.id, 'thread_reply', 'ts-reply'],
+    ],
   );
   assert.deepEqual(repos.state.links, [{ candidate_id: candidate.id, event_id: repos.state.events[0].id }]);
   assert.equal(repos.state.events[0].outcome, 'candidate');
+});
+
+test('a new candidate posts the card then the thread reply as two separate poster calls', async () => {
+  const { run, poster } = harness({
+    rows: { juju: [JUJU_ROWS[1]] },
+    script: { default: checkResult() },
+  });
+
+  await run(args());
+
+  assert.equal(poster.posts.length, 1, 'one channel post');
+  assert.equal(poster.replies.length, 1, 'one thread reply');
+  assert.equal(poster.replies[0].threadTs, poster.posts[0].ts, 'the reply threads off the card that was just posted');
+});
+
+test('a failed thread reply still leaves the card posted', async () => {
+  const { run, repos, poster } = harness({
+    rows: { juju: [JUJU_ROWS[1]] },
+    script: { default: checkResult() },
+  });
+  poster.replyInThread = async () => null;
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.cards_posted, 1, 'the card post still counts');
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.status, 'posted');
+  assert.equal(candidate.slack_ts, 'ts-1');
+  assert.deepEqual(
+    repos.state.actions.map((a) => a.action),
+    ['posted'],
+    'no thread_reply action is recorded when the reply failed',
+  );
+});
+
+test('headline is written on the candidate on insert', async () => {
+  const { run, repos } = harness({
+    rows: { juju: [JUJU_ROWS[1]] },
+    script: { default: checkResult({ headline: 'The article says the wrong thing.' }) },
+  });
+
+  await run(args());
+
+  assert.equal(repos.state.candidates[0].headline, 'The article says the wrong thing.');
 });
 
 test('NOT_A_GAP and HIDDEN are logged, not posted', async () => {
@@ -516,11 +570,11 @@ test('a needs-answer candidate posts a needs-answer card with an owner_pinged ac
   const candidate = repos.state.candidates[0];
   assert.equal(candidate.needs_answer, true);
   assert.equal(candidate.status, 'posted');
-  assert.match(poster.posts[0].card.text, /^\[NEEDS ANSWER/);
+  assert.match(poster.posts[0].card.text, /needs an answer/);
   assert.equal(poster.posts[0].card.text.includes('<@'), false, 'owners are not mentioned by default');
   assert.deepEqual(
     repos.state.actions.map((a) => a.action),
-    ['owner_pinged'],
+    ['owner_pinged', 'thread_reply'],
   );
 });
 
@@ -728,7 +782,7 @@ test('a failed Slack post leaves the candidate new, and the next run posts it', 
   assert.equal(repos.state.candidates[0].slack_ts, 'ts-2');
   assert.deepEqual(
     repos.state.actions.map((a) => a.action),
-    ['posted'],
+    ['posted', 'thread_reply'],
   );
   assert.equal(poster.posts.length, 2);
 });

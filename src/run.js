@@ -33,11 +33,10 @@ import { fingerprintOf } from './prefilter/fingerprint.js';
 import { computePriority } from './check/priority.js';
 import { runWithTrace, getTrace } from './trace.js';
 import {
-  buildCandidateCard,
-  buildNeedsAnswerCard,
+  buildGapPost,
+  buildGapThread,
   buildDuplicateReply,
   buildWeeklySummary,
-  ownersFor,
 } from './slack/blocks.js';
 
 const LANE = 'run';
@@ -528,6 +527,7 @@ export function createRun({
             truth_kind: truthKind,
             needs_answer: truthKind === 'none',
             question_paraphrase: result.question_paraphrase,
+            headline: result.headline,
             truth_summary: result.truth_summary,
             target_article_path: result.target_article_path,
             target_article_url: result.target_article_url,
@@ -572,6 +572,7 @@ export function createRun({
           // "needs answer" ping below.
           needs_answer: truthKind === 'none',
           question_paraphrase: result.question_paraphrase,
+          headline: result.headline,
           truth_summary: result.truth_summary,
           target_article_path: result.target_article_path,
           target_article_url: result.target_article_url,
@@ -652,17 +653,12 @@ export function createRun({
 
           const linked = await candidates.linkedEvents(candidate.id);
 
+          // One builder covers both a normal gap and a needs-answer one --
+          // buildGapPost reads `candidate.needs_answer` itself to suffix the
+          // label, so there is no branch here the way the old
+          // buildCandidateCard/buildNeedsAnswerCard split needed.
           const card = buildCard(
-            () =>
-              candidate.needs_answer
-                ? buildNeedsAnswerCard({
-                    candidate,
-                    linked,
-                    owners: ownersFor(candidate.category, ownerMapping),
-                    mentionOwners: env.hcLoopOwnerMentions,
-                    now: startedAt,
-                  })
-                : buildCandidateCard({ candidate, linked, now: startedAt }),
+            () => buildGapPost({ candidate, linked, now: startedAt, sidecarBaseUrl: env.sidecarBaseUrl }),
             `the card for candidate #${candidate.id}`,
           );
           // A card that fails the mention rules is a bug in the model's
@@ -683,6 +679,23 @@ export function createRun({
             slack_ts: ts,
           });
           stats.cards_posted += 1;
+
+          // The story of what happened and the ask to fix it live in the
+          // thread, not the channel post (Cards v2). A failed thread reply
+          // is logged (buildCard / poster.postCard both log under lane
+          // 'slack') and does not undo the card that already posted -- the
+          // action recorded above stays exactly what the repair path above
+          // keys off of.
+          const threadCard = buildCard(
+            () => buildGapThread({ candidate, linked, now: startedAt }),
+            `the thread reply for candidate #${candidate.id}`,
+          );
+          if (threadCard) {
+            const replyTs = await poster.replyInThread(channel, ts, threadCard);
+            if (replyTs) {
+              await actions.recordAction({ candidateId: candidate.id, action: 'thread_reply', slackTs: replyTs });
+            }
+          }
         }
       }
 
