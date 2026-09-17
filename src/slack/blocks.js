@@ -1,11 +1,14 @@
 // Pure Slack block builders for the Help Center Gap Detector. No imports
-// from env or network here on purpose — every value the cards need (owners,
-// mention gate, "now") is passed in by the caller (src/run.js, Task 13), so
-// this module can be unit-tested without Supabase, Slack, or config/env.js.
+// from env or network here on purpose — every value the cards need
+// (`sidecarBaseUrl`, "now") is passed in by the caller (src/run.js), so this
+// module can be unit-tested without Supabase, Slack, or config/env.js.
 //
-// Product decision (see plan "Card format" + the brief): candidate cards
-// never @-mention anyone. The literal words "@Claude" appear in exactly one
-// place — the "To ship:" line, as words a human types, not a Slack mention.
+// Cards v2 (see the approved redesign + HC_LOOP_MANUAL.md "Card format"):
+// the channel post is content-first and plain-language for a non-technical
+// help center writer -- `buildGapPost` -- and the story of what happened
+// plus the ask to fix it live in the thread reply -- `buildGapThread`. Cards
+// never @-mention anyone. The literal words "@Claude" appear only in the
+// thread's "To fix it" section, as words a human types, not a Slack mention.
 // `assertNoForbiddenMentions` is the enforcement point every builder here
 // runs before returning, so a bad model-written paraphrase throws at build
 // time instead of silently posting a ping.
@@ -43,6 +46,25 @@ export const TRUTH_LABELS = {
   none: 'no verified answer yet',
 };
 
+// Cards v2: the plain-language label a help center writer sees instead of
+// the raw verdict enum. Only the four verdicts that ever get their own card
+// need an entry (see HC_LOOP_MANUAL.md "Routing"); anything else falls back
+// to the raw verdict string in buildGapPost.
+export const VERDICT_LABELS = {
+  INCORRECT: 'Wrong information',
+  MISSING: 'Not covered',
+  NEEDS_EDIT: 'Unclear',
+  HIDDEN: 'Article exists but is hidden',
+  UNFINDABLE: 'Hard to find',
+};
+
+// Priority as a colored dot instead of the "[P1 ·" text prefix the old card
+// used. A candidate with no priority yet (not scored, or a shortcut/logged
+// row) reads as the same white circle as P3 -- "not urgent" is the correct
+// default, never a missing/red state.
+export const PRIORITY_DOT = { P1: ':red_circle:', P2: ':large_orange_circle:', P3: ':white_circle:' };
+const DEFAULT_PRIORITY_DOT = ':white_circle:';
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const MAX_LIST_ITEMS = 15;
@@ -69,8 +91,11 @@ const CLAUDE_LINE_RE = /^@claude\b/i;
  * not in `allow` (bare `<@U012AB>` or labeled `<@U012AB|hamza>`), a broadcast
  * mention (`<!here>`/`<!channel>`/`<!everyone>`/`<!subteam^ID|@group>`),
  * or a line whose trimmed start is the literal "@Claude" — unless that line
- * starts with "To ship:" (the one place the words are allowed, as text a
- * human types, not a mention). Returns `text` unchanged otherwise.
+ * starts with "To ship:" or "Reply in this thread with", or contains
+ * "with *@Claude*" (the places the words are allowed, as text a human
+ * types, not a mention: the old channel-post "To ship:" line and the
+ * thread's "To fix it" instructions -- see buildGapThread). Returns `text`
+ * unchanged otherwise.
  * @param {string} text
  * @param {{allow?: string[]}} [opts]
  * @returns {string}
@@ -93,6 +118,8 @@ export function assertNoForbiddenMentions(text, { allow = [] } = {}) {
   for (const line of text.split('\n')) {
     const trimmed = line.trimStart();
     if (trimmed.startsWith('To ship:')) continue;
+    if (trimmed.startsWith('Reply in this thread with')) continue;
+    if (trimmed.includes('with *@Claude*')) continue;
     if (CLAUDE_LINE_RE.test(trimmed)) {
       throw new ForbiddenMentionError('forbidden literal "@Claude" at the start of a line');
     }
@@ -189,25 +216,17 @@ function humanizeBasename(path) {
     .join(' ');
 }
 
-function evidenceLine(candidate) {
-  const queries = candidate.evidence?.queries ?? [];
-  const n = queries.filter((q) => q?.skipped !== true).length;
-  const m = (candidate.evidence?.files_read ?? []).length;
-  const closest = candidate.evidence?.closest_match?.path ?? null;
-  const confidence = candidate.confidence ?? null;
-
-  const parts = [`searched ${n} ways, read ${m} articles`];
-  if (closest) parts.push(`closest match: ${closest}`);
-  if (confidence !== null && confidence !== undefined) parts.push(`confidence ${confidence}%`);
-  parts.push(`candidate #${candidate.id}`);
-
-  return `Evidence: ${parts.join(' · ')}`;
-}
-
-function articleLine(candidate) {
-  if (!candidate.target_article_url) return null;
-  const title = humanizeBasename(candidate.target_article_path);
-  return `Article: ${title} · ${candidate.target_article_url}`;
+/**
+ * The card's article title from a repo path (`card-fee-recovery.mdx` ->
+ * `Card Fee Recovery`), or `null` for no path -- distinct from
+ * `humanizeBasename`'s `''`, so a template can write `title ? ... : ...`
+ * without an extra falsy check.
+ * @param {string|null|undefined} path
+ * @returns {string|null}
+ */
+export function articleTitle(path) {
+  if (!path) return null;
+  return humanizeBasename(path);
 }
 
 function sectionsToCard(plainLines, mrkdwnLines) {
@@ -219,107 +238,322 @@ function sectionsToCard(plainLines, mrkdwnLines) {
   return { text, blocks };
 }
 
-// The header line (`[P1 · INCORRECT] paraphrase`) is bold in the mrkdwn
-// blocks Slack renders, but stays unbolded in the plain-text `text`
-// fallback — that field is a notification/accessibility fallback, not
-// mrkdwn, so `*...*` would show up as literal asterisks there.
-function boldFirstLine(lines) {
-  if (lines.length === 0) return lines;
-  return [`*${lines[0]}*`, ...lines.slice(1)];
+/**
+ * The plain-English confidence word for a 0-100 score, or `Not rated` for
+ * `null`/`undefined`. Callers render it as `Fairly sure (85%)` by appending
+ * ` (<n>%)` themselves -- this returns only the word.
+ * @param {number|null|undefined} n
+ * @returns {string}
+ */
+export function confidenceWords(n) {
+  if (n === null || n === undefined) return 'Not rated';
+  if (n >= 90) return 'Very sure';
+  if (n >= 70) return 'Fairly sure';
+  if (n >= 40) return 'Not sure';
+  return 'Guessing';
+}
+
+function confidenceLabel(n) {
+  const words = confidenceWords(n);
+  return n === null || n === undefined ? words : `${words} (${n}%)`;
+}
+
+// Sidecar's `hc_gap_events_v` kind values that mean a rep flagged the
+// answer as wrong in some specific way (as opposed to `thumbs_down`, a
+// flat down-vote). `model_detected` is Sidecar's own detector finding
+// nothing, not a human flag at all -- reportedBy gives it a distinct line.
+const SIDECAR_FLAG_KINDS = ['missing', 'outdated', 'incorrect', 'hard_to_find', 'not_docs'];
+
+// Juju kind values where nobody -- rep, owner, or the model -- ever
+// produced an answer worth quoting.
+const JUJU_NO_ANSWER_KINDS = ['model_detected', 'cant_find', 'relay_held'];
+
+/**
+ * The linked event to attribute a card or thread to: the newest event that
+ * carries a human-verified truth, or (when none do) the newest event
+ * overall. The same rule decides both `reportedBy`'s subject and, in
+ * `buildGapThread`, which event's `truth_answer` is quoted as the human
+ * note -- so when a note exists, it is always this same event's.
+ * @param {Array<object>} linked
+ * @returns {object|null}
+ */
+function pickReportingEvent(linked = []) {
+  if (!linked || linked.length === 0) return null;
+  const sorted = [...linked].sort((a, b) => new Date(b.occurred_at) - new Date(a.occurred_at));
+  return sorted.find((e) => e.truth_kind === 'human') ?? sorted[0];
 }
 
 /**
- * A gap-candidate card: `{ text, blocks }` ready for `postCard`. Runs
- * `assertNoForbiddenMentions` on the assembled (pre-truncation) text before
- * returning — a model-written paraphrase or article title that smuggled in
- * a mention throws here, at build time.
- * @param {{candidate:object, linked:Array<object>, now?:Date}} args
- * @returns {{text:string, blocks:Array<object>}}
+ * The card/thread's "who reported this" line for one `gap_events` row, e.g.
+ * `Reported by a Tech Support rep in Sidecar · Sep 3`. Picks its sentence
+ * from the event's `source` and `kind` (see the Cards v2 spec's table),
+ * always ending in ` · <Mon D>` for the event's `occurred_at`.
+ * @param {object|null} event
+ * @returns {string}
  */
-export function buildCandidateCard({ candidate, linked = [], now = new Date() }) {
-  const summary = seenSummary(linked, now);
-  const prefix = candidate.priority ? `[${candidate.priority} · ${candidate.verdict}]` : `[${candidate.verdict}]`;
+export function reportedBy(event) {
+  if (!event) return 'Reported by unknown';
 
-  const lines = [];
-  lines.push(`${prefix} ${candidate.question_paraphrase}`);
+  const team = SIDECAR_TEAM_LABELS[event.detail?.team] ?? event.detail?.team ?? null;
+  const repPhrase = team ? `a ${team} rep` : 'a rep';
 
-  const truthLabel = TRUTH_LABELS[candidate.truth_kind] ?? TRUTH_LABELS.none;
-  lines.push(`Source: ${sourceLabel(summary.firstSource, summary.firstTeam)} · ${truthLabel} · ${summary.text}`);
-
-  const article = articleLine(candidate);
-  if (article) lines.push(article);
-
-  if (candidate.verdict === 'MISSING') {
-    const missing = candidate.truth_summary ?? candidate.proposed_change ?? null;
-    if (missing) lines.push(`Missing: ${missing}`);
+  let base;
+  if (event.source === 'sidecar') {
+    if (event.kind === 'thumbs_down') {
+      base = `Reported by ${repPhrase} in Sidecar`;
+    } else if (SIDECAR_FLAG_KINDS.includes(event.kind)) {
+      base = `Flagged by ${repPhrase} in Sidecar`;
+    } else if (event.kind === 'model_detected') {
+      base = `Sidecar could not find this in the help center${team ? ` (${team})` : ''}`;
+    } else {
+      base = `Reported by ${sourceLabel(event.source, event.detail?.team)}`;
+    }
+  } else if (event.source === 'juju') {
+    if ((event.kind === 'escalation' || event.kind === 'owner_answer') && event.truth_kind === 'human') {
+      base = 'Answered by a product owner in Slack';
+    } else if (event.kind === 'escalation') {
+      base = 'Escalated in Slack, no answer yet';
+    } else if (event.kind === 'doc_request') {
+      base = 'Requested as a doc fix in Slack';
+    } else if (JUJU_NO_ANSWER_KINDS.includes(event.kind)) {
+      base = 'Juju could not answer this from the help center';
+    } else {
+      base = `Reported by ${sourceLabel(event.source)}`;
+    }
   } else {
-    if (candidate.says_now) lines.push(`Says now: "${candidate.says_now}"`);
-    if (candidate.should_say) lines.push(`Should say: "${candidate.should_say}"`);
+    base = `Reported by ${sourceLabel(event.source, event.detail?.team)}`;
   }
 
-  lines.push(evidenceLine(candidate));
-
-  lines.push('To ship: reply in this thread with @Claude and the request below, or paste it in #mintlify-admin.');
-  lines.push(`  ${buildPasteRequest(candidate)}`);
-
-  const fullText = lines.join('\n');
-  assertNoForbiddenMentions(fullText);
-
-  return sectionsToCard(lines, boldFirstLine(lines));
+  return `${base} · ${formatShortDate(event.occurred_at)}`;
 }
 
 /**
- * A "needs answer" card: same shape as `buildCandidateCard`, but for events
- * with no verified truth yet. Owners are only ever @-mentioned when the
- * caller explicitly asks (`mentionOwners: true` *and* a non-empty `owners`
- * list) — the default stays silent, matching the product decision that
- * tagging on every card got ignored last time.
- * @param {{candidate:object, linked:Array<object>, owners?:string[],
- *   mentionOwners?:boolean, now?:Date}} args
+ * The card's conversation button, or `null` when none applies: a Juju event
+ * with an absolute `source_link` links straight to the Slack thread; a
+ * Sidecar event with a relative `source_link` joins it to `sidecarBaseUrl`
+ * (empty base -> no button, since there would be nowhere to send the
+ * reader).
+ * @param {object|null} event
+ * @param {{sidecarBaseUrl?:string}} [opts]
+ * @returns {{label:string, url:string}|null}
+ */
+export function conversationLink(event, { sidecarBaseUrl = '' } = {}) {
+  const link = event?.source_link;
+  if (!link) return null;
+
+  const isAbsolute = /^https?:\/\//i.test(link);
+  if (event.source === 'juju' && isAbsolute) {
+    return { label: 'See the Slack thread', url: link };
+  }
+  if (event.source === 'sidecar' && !isAbsolute && sidecarBaseUrl) {
+    return { label: "See the rep's conversation", url: `${sidecarBaseUrl}${link}` };
+  }
+  return null;
+}
+
+/**
+ * The channel post: one plain-language section, who reported it, and up to
+ * two buttons. `{ text, blocks }` ready for `postCard`. Runs
+ * `assertNoForbiddenMentions` on the assembled (pre-truncation) content
+ * before returning -- a model-written headline or paraphrase that smuggled
+ * in a mention throws here, at build time.
+ * @param {{candidate:object, linked?:Array<object>, now?:Date, sidecarBaseUrl?:string}} args
  * @returns {{text:string, blocks:Array<object>}}
  */
-export function buildNeedsAnswerCard({ candidate, linked = [], owners = [], mentionOwners = false, now = new Date() }) {
-  const summary = seenSummary(linked, now);
-  const prefix = candidate.priority ? `[NEEDS ANSWER · ${candidate.priority}]` : '[NEEDS ANSWER]';
+export function buildGapPost({ candidate, linked = [], now = new Date(), sidecarBaseUrl = '' }) {
+  void now;
+  const reportingEvent = pickReportingEvent(linked);
 
-  const lines = [];
-  lines.push(`${prefix} ${candidate.question_paraphrase}`);
-
-  lines.push(`Source: ${sourceLabel(summary.firstSource, summary.firstTeam)} · ${TRUTH_LABELS.none} · ${summary.text}`);
-
-  const article = articleLine(candidate);
-  if (article) lines.push(article);
-
-  lines.push(`Question: ${candidate.question_paraphrase}`);
-  lines.push(`Owner: ${candidate.category ?? 'general'}`);
-
-  const mention = mentionOwners === true && owners.length > 0;
-  if (mention) {
-    lines.push(`cc ${owners.map((id) => `<@${id}>`).join(' ')}`);
+  const dot = (candidate.priority && PRIORITY_DOT[candidate.priority]) || DEFAULT_PRIORITY_DOT;
+  let label = VERDICT_LABELS[candidate.verdict] ?? candidate.verdict ?? 'Gap';
+  if (typeof candidate.confidence === 'number' && candidate.confidence < 40) {
+    label = `${label} (not sure)`;
+  }
+  if (candidate.needs_answer) {
+    label = `${label} · needs an answer`;
   }
 
-  lines.push(evidenceLine(candidate));
-  lines.push('To resolve: reply in this thread with the correct answer; the loop re-checks it next run.');
+  const title = articleTitle(candidate.target_article_path);
+  const headline = candidate.headline || candidate.question_paraphrase;
 
-  const fullText = lines.join('\n');
-  assertNoForbiddenMentions(fullText, { allow: mention ? owners : [] });
+  const headerLine = `${dot} *${label}*${title ? ` · ${title}` : ''}\n${headline}`;
+  const reportedLine =
+    linked.length > 1
+      ? `${reportedBy(reportingEvent)} · Gap #${candidate.id} · seen ${linked.length} times`
+      : `${reportedBy(reportingEvent)} · Gap #${candidate.id}`;
+  const footerLine = 'Fix it or reject it in the thread :arrow_down:';
 
-  return sectionsToCard(lines, boldFirstLine(lines));
+  const fullPlainText = [headerLine, reportedLine, footerLine].join('\n');
+  assertNoForbiddenMentions(fullPlainText);
+
+  const blocks = [
+    { type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(headerLine, 3000) } },
+    { type: 'context', elements: [{ type: 'mrkdwn', text: truncateSlackText(reportedLine, 3000) }] },
+  ];
+
+  const buttons = [];
+  if (candidate.target_article_url) {
+    buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open the article' }, url: candidate.target_article_url });
+  }
+  const convo = conversationLink(reportingEvent, { sidecarBaseUrl });
+  if (convo) {
+    buttons.push({ type: 'button', text: { type: 'plain_text', text: convo.label }, url: convo.url });
+  }
+  if (buttons.length > 0) {
+    blocks.push({ type: 'actions', elements: buttons });
+  }
+
+  blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: footerLine }] });
+
+  const text = truncateSlackText(`${label}: ${headline}`, 4000);
+  return { text, blocks };
+}
+
+function scrubNote(text) {
+  if (text === null || text === undefined) return null;
+  const scrubbed = String(text)
+    .replace(/<@[UW][A-Z0-9]+(?:\|[^>]*)?>/g, '@someone')
+    .replace(/<!(?:subteam\^[A-Z0-9]+(?:\|[^>]*)?|here|channel|everyone)>/gi, '@group')
+    .replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, '$2 ($1)')
+    .replace(/<(https?:\/\/[^>]+)>/g, '$1');
+  return scrubbed.length > 300 ? `${scrubbed.slice(0, 299)}…` : scrubbed;
+}
+
+function whatHappenedSection(candidate, reportingEvent) {
+  const question = candidate.question_paraphrase;
+  let sentence;
+  if (reportingEvent?.source === 'sidecar') {
+    const team = SIDECAR_TEAM_LABELS[reportingEvent.detail?.team] ?? reportingEvent.detail?.team ?? null;
+    sentence = `A ${team ? `${team} ` : ''}rep asked Sidecar: "${question}"`;
+  } else if (reportingEvent?.source === 'juju') {
+    sentence = `Someone asked Juju in Slack: "${question}"`;
+  } else {
+    sentence = `Someone asked: "${question}"`;
+  }
+
+  const hasHumanNote = reportingEvent?.truth_kind === 'human' && Boolean(reportingEvent?.truth_answer);
+  if (!hasHumanNote) {
+    return `*What happened*\n${sentence} Nobody has confirmed the right answer yet.`;
+  }
+
+  let lead;
+  if (reportingEvent.source === 'sidecar' && reportingEvent.kind === 'thumbs_down') {
+    lead = 'The rep marked the answer wrong and wrote:';
+  } else if (reportingEvent.source === 'sidecar' && SIDECAR_FLAG_KINDS.includes(reportingEvent.kind)) {
+    lead = 'The rep flagged it and wrote:';
+  } else if (reportingEvent.source === 'juju') {
+    lead = 'A product owner answered:';
+  } else {
+    lead = 'Someone answered:';
+  }
+
+  const note = scrubNote(reportingEvent.truth_answer);
+  return `*What happened*\n${sentence} ${lead}\n> ${note}`;
+}
+
+function articleTodaySection(candidate) {
+  let todayLine;
+  if (candidate.says_now) {
+    todayLine = `> ${candidate.says_now}`;
+  } else if (candidate.target_article_path) {
+    todayLine = `> Nothing about this. The closest article is ${articleTitle(candidate.target_article_path)}.`;
+  } else {
+    todayLine = '> No article covers this.';
+  }
+
+  let block = `*The article says today*\n${todayLine}`;
+
+  const draft = candidate.should_say ?? candidate.proposed_change ?? null;
+  if (draft !== null) {
+    const heading = candidate.verdict === 'MISSING' ? 'Add this' : 'It should say';
+    const finalHeading = candidate.needs_answer
+      ? `Draft, unconfirmed: ${heading.charAt(0).toLowerCase()}${heading.slice(1)}`
+      : heading;
+    block += `\n*${finalHeading}*\n> ${draft}`;
+  }
+
+  return block;
+}
+
+function toFixItSection(candidate) {
+  const hasDraft = Boolean(candidate.should_say || candidate.proposed_change);
+  const lowConfidence = typeof candidate.confidence === 'number' && candidate.confidence < 40;
+
+  if (lowConfidence || (candidate.needs_answer && !hasDraft)) {
+    return (
+      '*To fix it*\n' +
+      "This one needs a human look before anything is changed. If you know the right answer, update the article, then react :white_check_mark:. React :x: if this isn't a real gap."
+    );
+  }
+
+  if (candidate.needs_answer && hasDraft) {
+    return (
+      '*To fix it*\n' +
+      'Nobody has confirmed this yet. If the draft below is right, reply in this thread with *@Claude* and the request. If you are not sure, leave it and react :x: or ask the product owner.\n' +
+      `\`\`\`${buildPasteRequest(candidate)}\`\`\``
+    );
+  }
+
+  return (
+    '*To fix it*\n' +
+    'Reply in this thread with *@Claude* and the request below. Claude opens the change for you to approve in #mintlify-admin, same as always.\n' +
+    `\`\`\`${buildPasteRequest(candidate)}\`\`\`\n` +
+    "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap."
+  );
+}
+
+function howSureSection(candidate) {
+  const m = (candidate.evidence?.files_read ?? []).length;
+  let ending;
+  if (candidate.says_now) {
+    ending = ` and found that sentence in ${articleTitle(candidate.target_article_path)}`;
+  } else if (candidate.verdict === 'MISSING') {
+    ending = '; none of them cover this';
+  } else {
+    ending = '';
+  }
+  return `*How sure is this?*\n${confidenceLabel(candidate.confidence)}. The loop read ${m} articles${ending}.`;
+}
+
+/**
+ * The thread reply: the story of what happened, what the article says
+ * today vs. what it should say, how to fix it (three variants depending on
+ * confidence and whether an answer is confirmed yet), and how sure the loop
+ * is. `{ text, blocks }` ready for `replyInThread`. Runs
+ * `assertNoForbiddenMentions` on the assembled content before returning.
+ * @param {{candidate:object, linked?:Array<object>, now?:Date}} args
+ * @returns {{text:string, blocks:Array<object>}}
+ */
+export function buildGapThread({ candidate, linked = [], now = new Date() }) {
+  void now;
+  const reportingEvent = pickReportingEvent(linked);
+
+  const sections = [
+    whatHappenedSection(candidate, reportingEvent),
+    articleTodaySection(candidate),
+    toFixItSection(candidate),
+    howSureSection(candidate),
+  ];
+
+  const fullPlainText = sections.join('\n\n');
+  assertNoForbiddenMentions(fullPlainText);
+
+  const blocks = sections.map((s) => ({ type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(s, 3000) } }));
+  const text = truncateSlackText(`How to fix gap #${candidate.id}`, 4000);
+  return { text, blocks };
 }
 
 /**
  * A thread reply posted when a new event merges into an existing candidate:
- * "Seen again: now Nx (Source n, ...). Latest: Source on <date>."
+ * "Seen again: now N times (Source n, ...). Latest: <reportedBy>."
  * @param {{candidate:object, linked:Array<object>, latest:{source:string, occurred_at:string}, now?:Date}} args
  * @returns {{text:string, blocks:Array<object>}}
  */
 export function buildDuplicateReply({ candidate, linked = [], latest, now = new Date() }) {
   void candidate;
   const summary = seenSummary(linked, now);
-  const latestLabel = sourceLabel(latest?.source, latest?.detail?.team);
-  const latestDate = latest?.occurred_at ? formatShortDate(latest.occurred_at) : 'unknown';
 
-  const text = `Seen again: now ${summary.count}x (${bySourceParenthetical(summary.bySource)}). Latest: ${latestLabel} on ${latestDate}.`;
+  const text = `Seen again: now ${summary.count} times (${bySourceParenthetical(summary.bySource)}). Latest: ${reportedBy(latest)}.`;
   assertNoForbiddenMentions(text);
 
   return sectionsToCard([text], [text]);
