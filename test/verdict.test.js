@@ -125,6 +125,24 @@ test('extractVerdict: claims non-array -> []', () => {
   assert.deepEqual(result.claims, []);
 });
 
+test('extractVerdict: headline is trimmed and passed through', () => {
+  const result = extractVerdict(JSON.stringify(baseJson({ headline: '  The article says X.  ' })));
+  assert.equal(result.headline, 'The article says X.');
+});
+
+test('extractVerdict: headline missing or non-string -> null', () => {
+  const missing = baseJson();
+  delete missing.headline;
+  assert.equal(extractVerdict(JSON.stringify(missing)).headline, null);
+  assert.equal(extractVerdict(JSON.stringify(baseJson({ headline: 42 }))).headline, null);
+});
+
+test('extractVerdict: headline is cut to 200 chars', () => {
+  const long = 'x'.repeat(250);
+  const result = extractVerdict(JSON.stringify(baseJson({ headline: long })));
+  assert.equal(result.headline.length, 200);
+});
+
 test('extractVerdict: question_paraphrase missing -> null', () => {
   const json = baseJson();
   delete json.question_paraphrase;
