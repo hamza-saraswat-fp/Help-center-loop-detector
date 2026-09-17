@@ -51,39 +51,99 @@ posted as individual docs requests, see Routing.
 
 ## Card format
 
+Cards v2: the channel post is a plain-language headline for a help center
+writer, and the story of what happened plus the ask to fix it live in the
+thread reply underneath it. The work happens in the thread, not the post.
+
+The channel post, for a real gap (candidate #9, card fee recovery):
+
 ```
-[P1 · INCORRECT] Customer tags: the "do not service" flag
-Source: Juju · verified by a product owner · seen 3x since Sep 1 (Juju 2, Sidecar 1)
-Article: Managing Customer Tags · https://help.fieldpulse.com/using-fieldpulse/customers/tags
-Says now: "FieldPulse doesn't have a built-in do-not-service flag."
-Should say: "Apply the Do Not Service tag; it shows on the customer record and blocks new job creation."
-Evidence: searched 3 ways, read 10 articles · closest match: using-fieldpulse/customers/managing-customer-tags.mdx · confidence 92% · candidate #148
-To ship: reply in this thread with @Claude and the request below, or paste it in #mintlify-admin.
-  In "using-fieldpulse/customers/managing-customer-tags.mdx", replace "FieldPulse doesn't have a built-in do-not-service flag." with "Apply the Do Not Service tag; it shows on the customer record and blocks new job creation."
+:red_circle: *Wrong information* · Card Fee Recovery
+The article says the card fee is typically 3%. A rep confirmed it is 4%.
+
+Reported by a Tech Support rep in Sidecar · Sep 3 · Gap #9
+
+[Open the article]  [See the rep's conversation]
+
+Fix it or reject it in the thread :arrow_down:
 ```
 
-This is exactly what `buildCandidateCard` in `src/slack/blocks.js` produces
-for a real candidate, not an approximation of it; `test/docs.test.js` builds
-that same card from a fixture and checks this file against it word for word,
-so if the code's wording ever changes, this sample has to change with it.
+Its thread reply:
 
-Cards never carry `<@U…>` mentions or the literal text `@Claude` outside the
-"To ship" instruction line, that line only ever tells a *human* what to
-type, it never triggers anything itself. `NEEDS_EDIT` and `MISSING` cards
-follow the same shape with the fields that apply.
+````
+*What happened*
+A Tech Support rep asked Sidecar: "What percentage does card fee recovery add for credit card payments, and for ACH?" The rep marked the answer wrong and wrote:
+> CFR adds 4% fee not 3%
+
+*The article says today*
+> When you enable Card Fee Recovery, each line item on an invoice will be increased by the fee rate you pass on to your customers, which is typically 3%.
+*It should say*
+> When you enable Card Fee Recovery, each line item on an invoice will be increased by the fee rate you pass on to your customers, which is typically 4%.
+
+*To fix it*
+Reply in this thread with *@Claude* and the request below. Claude opens the change for you to approve in #mintlify-admin, same as always.
+```
+In "Card Fee Recovery", replace "which is typically 3%" with "which is typically 4%".
+```
+Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.
+
+*How sure is this?*
+Fairly sure (85%). The loop read 9 articles and found that sentence in Card Fee Recovery.
+````
+
+This is exactly what `buildGapPost` and `buildGapThread` in
+`src/slack/blocks.js` produce for a real candidate, not an approximation of
+it; `test/docs.test.js` checks this file against their output word for
+word, so if the code's wording ever changes, this sample has to change with
+it.
+
+The post's label is one of these plain-language words, never the raw
+verdict:
+
+| Verdict | Label |
+| --- | --- |
+| `INCORRECT` | Wrong information |
+| `MISSING` | Not covered |
+| `NEEDS_EDIT` | Unclear |
+| `HIDDEN` | Article exists but is hidden |
+| `UNFINDABLE` | Hard to find |
+
+A candidate the loop isn't sure about gets `(not sure)` added to the label;
+one with no confirmed answer yet gets ` · needs an answer` added. The dot
+before the label is the priority, red for P1, orange for P2, white for P3
+or no priority yet.
+
+The thread's "How sure is this?" line uses one of these words for the
+candidate's confidence score:
+
+| Confidence | Word |
+| --- | --- |
+| 90-100 | Very sure |
+| 70-89 | Fairly sure |
+| 40-69 | Not sure |
+| below 40 | Guessing |
+| not rated | Not rated |
+
+A candidate below 40 confidence, or one with no confirmed answer and no
+draft yet, gets a different "To fix it" section that asks a human to look
+at it before anything changes, rather than a ready-to-paste request. Cards
+never carry `<@U...>` mentions or the literal text `@Claude` outside the "To
+fix it" instructions, those instructions only ever tell a *human* what to
+type, they never trigger anything themselves.
 
 ## Routing
 
 `INCORRECT`, `MISSING`, and `NEEDS_EDIT` destined for the help center post
-as individual candidate cards to the live Slack channel (or the shadow
-channel outside live mode). `UNFINDABLE` and `HIDDEN` are never posted as
+as individual gap posts to the live Slack channel (or the shadow channel
+outside live mode). `UNFINDABLE` and `HIDDEN` are never posted as
 individual docs requests, they're logged and rolled into the weekly
 summary instead, since neither one is a "go fix an article" request in the
 usual sense. Candidates destined for `internal` route to the appropriate
-category owner; events with no existing answer (`needs_answer`) route to
-the product owner. Shipping a fix means replying `@Claude` in the card's
-thread with the docs repo connected, or pasting the request in
-`#mintlify-admin`.
+category owner; events with no existing answer (`needs_answer`) get the
+same post and thread, labeled "needs an answer" instead of being routed
+anywhere separately. Shipping a fix means replying `@Claude` in the post's
+thread with the docs repo connected, or making the edit yourself and
+reacting :white_check_mark:.
 
 ## Fix the file, not the thread
 
