@@ -184,7 +184,11 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
     try {
       const { data, error } = await client
         .from('gap_events')
-        .select('id, source, occurred_at, truth_kind, source_link, needs_answer, detail')
+        // kind and truth_answer added for Cards v2 (src/slack/blocks.js's
+        // reportedBy / buildGapThread): kind picks the right sentence per
+        // event type, truth_answer is the rep/owner note quoted in the
+        // thread's "What happened" section.
+        .select('id, source, occurred_at, truth_kind, source_link, needs_answer, detail, kind, truth_answer')
         .eq('candidate_id', candidateId)
         .order('occurred_at', { ascending: false });
 

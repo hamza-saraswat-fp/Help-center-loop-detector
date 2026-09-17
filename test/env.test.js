@@ -158,6 +158,14 @@ test('mintlifyMcpUrl defaults to the FieldPulse Mintlify MCP endpoint', () => {
   assert.equal(config.mintlifyMcpUrl, 'https://fieldpulse.mintlify.app/mcp');
 });
 
+test('sidecarBaseUrl defaults to empty and trims a trailing slash', () => {
+  assert.equal(loadEnv(baseEnv()).sidecarBaseUrl, '');
+  assert.equal(
+    loadEnv(baseEnv({ SIDECAR_BASE_URL: 'https://project-sidecar.vercel.app/' })).sidecarBaseUrl,
+    'https://project-sidecar.vercel.app',
+  );
+});
+
 test('docsCloneDir and docsRepoSlug have safe defaults', () => {
   const config = loadEnv(baseEnv());
   assert.equal(config.docsCloneDir, '/tmp/hc-docs');
