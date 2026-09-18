@@ -637,6 +637,46 @@ test('buildWeeklySummary: caps each list at 15 items with "...and K more"', () =
   assert.match(summary.text, /…and 3 more/);
 });
 
+// --- buildWeeklySummary: "Seen once, not confirmed" ---------------------------
+
+test('buildWeeklySummary: the unconfirmed list is first, uses headline or paraphrase, and the article title or "no article"', () => {
+  const unconfirmed = [
+    { id: 20, headline: 'Wrong tag behavior', question_paraphrase: 'Does the tag block scheduling?', target_article_path: 'using-fieldpulse/customers/tag-behavior.mdx' },
+    { id: 21, question_paraphrase: 'Can I export a report?', target_article_path: null },
+  ];
+  const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unconfirmed, now: NOW });
+
+  assert.match(summary.text, /^Weekly summary since Sep 8\n\nSeen once, not confirmed \(2\)/);
+  assert.match(summary.text, /#20 Wrong tag behavior · Tag Behavior/);
+  assert.match(summary.text, /#21 Can I export a report\? · no article/);
+  // First in order, ahead of the other three lists.
+  assert.ok(summary.text.indexOf('Seen once, not confirmed') < summary.text.indexOf('Exists but hard to find'));
+});
+
+test('buildWeeklySummary: the unconfirmed list is capped at 15 with "...and K more"', () => {
+  const unconfirmed = Array.from({ length: 17 }, (_, i) => ({
+    id: i + 1,
+    question_paraphrase: `Question ${i + 1}`,
+    target_article_path: null,
+  }));
+  const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unconfirmed, now: NOW });
+  assert.match(summary.text, /Seen once, not confirmed \(17\)/);
+  assert.match(summary.text, /…and 2 more/);
+});
+
+test('buildWeeklySummary: an empty unconfirmed list still renders its header', () => {
+  const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', now: NOW });
+  assert.match(summary.text, /Seen once, not confirmed \(0\)/);
+});
+
+test('buildWeeklySummary: a mention smuggled into an unconfirmed item throws', () => {
+  const unconfirmed = [{ id: 22, question_paraphrase: 'Ask <@U123> about exports', target_article_path: null }];
+  assert.throws(
+    () => buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unconfirmed, now: NOW }),
+    ForbiddenMentionError,
+  );
+});
+
 // --- assertNoForbiddenMentions -------------------------------------------------
 
 test('assertNoForbiddenMentions: throws on <@U123>', () => {
