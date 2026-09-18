@@ -353,6 +353,14 @@ export function createRun({
       // itself: the same question twice in one pull is still only one gap.
       const seenFingerprints = new Set();
 
+      // Candidate ids this run itself counted into stats.held_unconfirmed,
+      // so a same-run promotion (a second sighting merging into a candidate
+      // this same run just held) can decrement it back out -- the stat means
+      // "held at the end of this run," not "held at some point during it."
+      // A promotion of a candidate held by an *earlier* run is never in this
+      // set, so it correctly leaves the count alone.
+      const heldThisRun = new Set();
+
       // A write that failed leaves the event unprocessed, so it comes back next
       // run and buys another model call. Three of those and the loop gives up
       // on it, exactly as it does on a failing check: a NOT NULL or CHECK
@@ -440,7 +448,8 @@ export function createRun({
           log(LANE, `duplicate ${label} -> candidate #${existing.id ?? 'in-memory'}`);
           if (dryRun) return;
 
-          const merged = (await candidates.mergeEventIntoCandidate(existing, event)) ?? existing;
+          const mergeResult = await candidates.mergeEventIntoCandidate(existing, event);
+          const merged = mergeResult ?? existing;
           await candidates.linkEvent(existing.id, event.id);
 
           // The priority of a gap depends on how often and from where it
@@ -466,18 +475,45 @@ export function createRun({
           // promotion does. Only a candidate held for exactly that reason is
           // eligible: one logged as internal, NOT_A_GAP, UNFINDABLE, or
           // HIDDEN never gets a second look just because it was seen again.
-          const heldReason = existing.evidence?.hold_reason ?? null;
+          // `existing` may be either the full row (`findByFingerprint`,
+          // `hold_reason` nested under `evidence`) or the near-duplicate
+          // projection (`hold_reason` pulled to the top level by a
+          // PostgREST json arrow alias, no `evidence` at all) -- read both.
+          const heldReason = existing.hold_reason ?? existing.evidence?.hold_reason ?? null;
+          // Gated on the merge itself having succeeded: on a failed merge
+          // `merged` falls back to the pre-merge `existing`, whose
+          // event_count has not actually moved in the DB, and -- for a
+          // near-duplicate match -- carries no full `evidence` to safely
+          // rewrite. Promoting off that would either fire early or wipe
+          // evidence it can't see the whole of; skipping is the safe choice
+          // either way, and the next run's merge attempt gets another shot.
           const eligibleForPromotion =
+            mergeResult !== null &&
             existing.status === 'logged' &&
             existing.destination === 'help_center' &&
             HELD_PROMOTABLE_VERDICTS.has(existing.verdict) &&
             heldReason === HOLD_REASON_UNCONFIRMED &&
-            (merged.event_count ?? existing.event_count ?? 0) >= 2;
+            (merged.event_count ?? 0) >= 2;
 
           if (eligibleForPromotion) {
-            const clearedEvidence = { ...(merged.evidence ?? existing.evidence ?? {}) };
-            delete clearedEvidence.hold_reason;
-            await candidates.updateCandidate(existing.id, { status: 'new', evidence: clearedEvidence });
+            // Re-read the full row rather than trust `merged`/`existing`:
+            // neither is guaranteed to carry the whole `evidence` object (the
+            // near-duplicate projection never does), and writing a clear of
+            // just `hold_reason` from a partial `evidence` would wipe
+            // whatever else was in it.
+            const full = await candidates.findById(existing.id);
+            if (full) {
+              const clearedEvidence = { ...(full.evidence ?? {}) };
+              delete clearedEvidence.hold_reason;
+              await candidates.updateCandidate(existing.id, { status: 'new', evidence: clearedEvidence });
+            } else {
+              logError(LANE, `could not re-read candidate #${existing.id} to promote it; leaving evidence alone`);
+              await candidates.updateCandidate(existing.id, { status: 'new' });
+            }
+            if (heldThisRun.has(existing.id)) {
+              stats.held_unconfirmed -= 1;
+              heldThisRun.delete(existing.id);
+            }
             log(LANE, `candidate #${existing.id} promoted from a held single: seen again from ${label}`);
           }
 
@@ -666,7 +702,10 @@ export function createRun({
         }
 
         stats.candidates_new += 1;
-        if (holdReason) stats.held_unconfirmed += 1;
+        if (holdReason) {
+          stats.held_unconfirmed += 1;
+          heldThisRun.add(candidate.id);
+        }
         await candidates.linkEvent(candidate.id, event.id);
         await events.markProcessed(event.id, 'candidate', { candidateId: candidate.id });
         log(LANE, `candidate #${candidate.id} ${result.verdict} ${status} from ${label}`);

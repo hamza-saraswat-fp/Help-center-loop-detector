@@ -268,12 +268,40 @@ test('findNearDuplicate: projects the columns the duplicate path reads', async (
     'slack_channel',
     'category',
     'question_paraphrase',
+    'destination',
   ]) {
     assert.ok(
       projection.split(',').map((c) => c.trim()).includes(column),
       `${column} missing from the near-duplicate projection`,
     );
   }
+});
+
+// --- review round 2: A1, the promotion decision must not pull whole `evidence` ----
+// `evidence` is the fattest column on gap_candidates (mintlify hits, onyx
+// hits, lexical_top, queries, files_read), and this query runs for every
+// non-duplicate event against every candidate in the category from the last
+// 90 days. Only the "was this held for a single unconfirmed sighting?"
+// decision needs anything out of it, and that's one key, so it travels as a
+// PostgREST json arrow alias instead of the whole jsonb blob.
+test('findNearDuplicate: pulls only hold_reason out of evidence via a json arrow alias, never the whole column', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_candidates.select': {
+      data: [{ id: 1, fingerprint_terms: ['add', 'team', 'member'], last_seen: '2026-09-10T00:00:00.000Z' }],
+      error: null,
+    },
+  });
+  const candidates = createCandidatesRepo({ client, now });
+
+  await candidates.findNearDuplicate('team', ['add', 'team', 'member']);
+
+  const projection = calls[0].select;
+  assert.ok(
+    projection.includes('hold_reason:evidence->>hold_reason'),
+    'expected the PostgREST json arrow alias, not the raw evidence column',
+  );
+  const columns = projection.split(',').map((c) => c.trim());
+  assert.ok(!columns.includes('evidence'), 'the whole evidence jsonb must not be selected');
 });
 
 test('findNearDuplicate: below threshold returns null', async () => {

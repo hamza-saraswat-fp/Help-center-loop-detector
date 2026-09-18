@@ -790,6 +790,118 @@ test('a repeat of a candidate logged as NOT_A_GAP is not promoted', async () => 
   assert.equal(poster.posts.length, 0);
 });
 
+test('an old help-center MISSING candidate logged with no hold_reason is not promoted by a repeat', async () => {
+  // Same destination and a promotable verdict as a held single, but no
+  // hold_reason -- e.g. a row logged before this feature existed. Only the
+  // internal/NOT_A_GAP shapes above are covered otherwise; this is the more
+  // subtle negative case where everything matches except the marker itself.
+  const row = JUJU_ROWS[1];
+  const fp = fingerprintFor(row, 'juju');
+  const { run, repos, poster } = harness({
+    rows: { juju: [row] },
+    seed: {
+      candidates: [
+        {
+          id: 1,
+          fingerprint: fp.hash,
+          fingerprint_terms: fp.terms,
+          category: fp.category,
+          destination: 'help_center',
+          verdict: 'MISSING',
+          status: 'logged',
+          question_paraphrase: 'Can jobs be bulk-reassigned?',
+          needs_answer: true,
+          evidence: {},
+          event_count: 1,
+          first_seen: '2026-09-01T00:00:00.000Z',
+          last_seen: '2026-09-01T00:00:00.000Z',
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+
+  await run(args());
+
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.status, 'logged', 'destination and verdict match, but no hold_reason means no promotion');
+  assert.equal(candidate.event_count, 2, 'the merge still happens, just not the promotion');
+  assert.equal(poster.posts.length, 0);
+});
+
+test('two fresh unconfirmed sightings in the same run: the first holds, the second merges and promotes it', async () => {
+  const row1 = JUJU_ROWS[0];
+  const row2 = { ...JUJU_ROWS[0], event_id: 7002, occurred_at: '2026-09-10T15:00:00Z' };
+  const { run, repos, poster } = harness({
+    rows: { juju: [row1, row2] },
+    script: { default: checkResult({ verdict: 'MISSING' }) },
+  });
+
+  const { stats } = await run(args());
+
+  assert.equal(repos.state.candidates.length, 1, 'the second sighting merges into the first candidate row');
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.status, 'posted', 'promoted and posted within the one run');
+  assert.equal(candidate.event_count, 2);
+  assert.equal(candidate.evidence.hold_reason, undefined, 'the hold is cleared');
+  assert.equal(poster.posts.length, 1, 'exactly one card');
+  assert.equal(poster.replies.length, 1, 'its thread reply, not a duplicate reply');
+  assert.equal(stats.candidates_new, 1);
+  assert.equal(stats.duplicates, 1);
+  assert.equal(stats.held_unconfirmed, 0, 'held at the end of the run, not at some point during it');
+});
+
+test('a held single re-checked and still unconfirmed stays logged with its hold preserved', async () => {
+  const { run, repos, poster } = harness({
+    script: { default: checkResult({ verdict: 'MISSING' }) },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'juju',
+          source_event_id: '5001',
+          occurred_at: JUJU_ROWS[0].occurred_at,
+          question: JUJU_ROWS[0].question,
+          truth_kind: 'none',
+          detail: {},
+          processed_at: null,
+          outcome: null,
+          candidate_id: 1,
+        },
+      ],
+      candidates: [
+        {
+          id: 1,
+          fingerprint: 'fp-still-unconfirmed',
+          fingerprint_terms: ['invoice'],
+          category: 'invoicing',
+          destination: 'help_center',
+          verdict: 'MISSING',
+          priority: 'P2',
+          status: 'logged',
+          truth_kind: 'none',
+          needs_answer: true,
+          evidence: { hold_reason: 'unconfirmed_single' },
+          question_paraphrase: 'Why does the invoice total differ?',
+          event_count: 1,
+          first_seen: '2026-09-10T14:22:00.000Z',
+          last_seen: '2026-09-10T14:22:00.000Z',
+          created_at: '2026-09-10T14:22:00.000Z',
+        },
+      ],
+    },
+  });
+
+  await run(args());
+
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.status, 'logged', 'still unconfirmed, so still not posted');
+  assert.equal(candidate.needs_answer, true);
+  assert.equal(candidate.evidence.hold_reason, 'unconfirmed_single', 'the hold is preserved, not dropped');
+  assert.equal(candidate.event_count, 1, 'a re-check is not another sighting');
+  assert.equal(poster.posts.length, 0);
+});
+
 test('a re-check with human truth on a held single is promoted and posted', async () => {
   const answered = {
     ...JUJU_ROWS[0],

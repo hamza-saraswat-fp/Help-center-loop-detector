@@ -35,12 +35,21 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
         // Wider than the match itself needs: this row is what run.js's
         // duplicate path falls back to when `mergeEventIntoCandidate` fails,
         // and it reads verdict (to recompute priority), slack_ts and
-        // slack_channel (to reply in the card's thread), and destination /
-        // evidence (to decide whether a held single is promoted once seen
-        // twice) off it.
+        // slack_channel (to reply in the card's thread), and destination (to
+        // decide whether a held single is promoted once seen twice) off it.
+        // `evidence` itself is deliberately NOT selected here: it is the
+        // fattest column on the row (mintlify hits, onyx hits, lexical_top,
+        // queries, files_read), this query runs on every non-duplicate event
+        // against every candidate in the category from the last 90 days, and
+        // the promotion decision only needs one key out of it. The PostgREST
+        // json arrow alias pulls just that key as `hold_reason`; run.js
+        // re-reads the full row with `findById` on the rare run where it
+        // actually promotes, so the evidence it writes back is never built
+        // from this narrow projection.
         .select(
           'id, fingerprint_terms, status, last_seen, event_count, priority, needs_answer, ' +
-            'verdict, slack_ts, slack_channel, category, question_paraphrase, destination, evidence',
+            'verdict, slack_ts, slack_channel, category, question_paraphrase, destination, ' +
+            'hold_reason:evidence->>hold_reason',
         )
         .eq('category', category)
         .gte('last_seen', cutoff);
