@@ -657,18 +657,34 @@ function formatListSection(title, items, formatter) {
 }
 
 /**
- * The weekly digest of things that don't get their own candidate card:
- * UNFINDABLE (exists but hard to find), HIDDEN (exists but hidden — nav
- * changes need Evan, so these are flagged rather than auto-fixed), and
- * internal-only matches (not for the help center at all).
- * @param {{since:string|Date, unfindable?:Array<object>, hidden?:Array<object>,
- *   internal?:Array<object>, now?:Date}} args
+ * The weekly digest of things that don't get their own candidate card: a
+ * single unconfirmed sighting held rather than posted (see "The rule" in
+ * HC_LOOP_MANUAL.md's Routing section), UNFINDABLE (exists but hard to
+ * find), HIDDEN (exists but hidden, nav changes need Evan, so these are
+ * flagged rather than auto-fixed), and internal-only matches (not for the
+ * help center at all). The unconfirmed list is first, since it is the
+ * largest and most actionable of the four.
+ * @param {{since:string|Date, unconfirmed?:Array<object>, unfindable?:Array<object>,
+ *   hidden?:Array<object>, internal?:Array<object>, now?:Date}} args
  * @returns {{text:string, blocks:Array<object>}}
  */
-export function buildWeeklySummary({ since, unfindable = [], hidden = [], internal = [], now = new Date() }) {
+export function buildWeeklySummary({
+  since,
+  unconfirmed = [],
+  unfindable = [],
+  hidden = [],
+  internal = [],
+  now = new Date(),
+}) {
   void now;
   const header = `Weekly summary since ${formatShortDate(since)}`;
 
+  const unconfirmedSection = formatListSection(
+    'Seen once, not confirmed',
+    unconfirmed,
+    (item) =>
+      `#${item.id} ${item.headline || item.question_paraphrase} · ${articleTitle(item.target_article_path) || 'no article'}`,
+  );
   const unfindableSection = formatListSection(
     'Exists but hard to find',
     unfindable,
@@ -685,11 +701,11 @@ export function buildWeeklySummary({ since, unfindable = [], hidden = [], intern
     (item) => `#${item.id} ${item.question_paraphrase} · ${item.category}`,
   );
 
-  const lines = [header, '', unfindableSection, '', hiddenSection, '', internalSection];
+  const lines = [header, '', unconfirmedSection, '', unfindableSection, '', hiddenSection, '', internalSection];
   const text = lines.join('\n');
   assertNoForbiddenMentions(text);
 
-  const blockTexts = [header, unfindableSection, hiddenSection, internalSection];
+  const blockTexts = [header, unconfirmedSection, unfindableSection, hiddenSection, internalSection];
   return {
     text: truncateSlackText(text, 4000),
     blocks: blockTexts.map((t) => ({ type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(t, 3000) } })),

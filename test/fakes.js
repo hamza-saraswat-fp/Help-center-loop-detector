@@ -173,7 +173,11 @@ export function fakeSupabase(script = {}) {
  * consumed, so a test can prove the path it meant to exercise was reached.
  * @param {{now?: () => Date, seed?: {events?: object[], candidates?: object[], runs?: object[]}}} [opts]
  */
-// Mirrors the `select(...)` in src/db/candidates.js's findNearDuplicate.
+// Mirrors the `select(...)` in src/db/candidates.js's findNearDuplicate --
+// deliberately without `evidence`: the real query pulls only `hold_reason`
+// out of it via a PostgREST json arrow alias (`hold_reason:evidence->>hold_reason`),
+// never the whole jsonb column. `hold_reason` itself is computed below,
+// not listed here, since it isn't a real top-level column on the row.
 const NEAR_DUPLICATE_COLUMNS = [
   'id',
   'fingerprint_terms',
@@ -187,6 +191,7 @@ const NEAR_DUPLICATE_COLUMNS = [
   'slack_channel',
   'category',
   'question_paraphrase',
+  'destination',
 ];
 
 // Mirrors the `select(...)` in src/db/candidates.js's linkedEvents. Kept
@@ -323,9 +328,15 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       // caller that reads a column this query does not fetch should see it
       // missing here too.
       if (!best) return null;
-      return Object.fromEntries(
+      const projected = Object.fromEntries(
         NEAR_DUPLICATE_COLUMNS.filter((column) => column in best).map((column) => [column, best[column]]),
       );
+      // `hold_reason` is the PostgREST json arrow alias
+      // (`hold_reason:evidence->>hold_reason`), computed from `evidence`
+      // rather than being a column of its own -- `evidence` itself is never
+      // exposed on this projection.
+      projected.hold_reason = best.evidence?.hold_reason ?? null;
+      return projected;
     },
     async insertCandidate(row) {
       if (scriptedToFail('insertCandidate')) return null;

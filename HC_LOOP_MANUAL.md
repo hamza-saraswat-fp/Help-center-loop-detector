@@ -145,6 +145,12 @@ anywhere separately. Shipping a fix means replying `@Claude` in the post's
 thread with the docs repo connected, or making the edit yourself and
 reacting :white_check_mark:.
 
+A gap with a human-confirmed answer still posts immediately, exactly as
+above. A gap nobody has confirmed an answer for only posts once it has been
+seen twice; the first sighting is logged with `evidence.hold_reason:
+'unconfirmed_single'` and shows up in the weekly summary's "Seen once, not
+confirmed" list instead of a card.
+
 ## Fix the file, not the thread
 
 When a card is wrong, the wrong article, a bad priority call, a
@@ -281,8 +287,11 @@ elsewhere.
 Once a week, the first run after 14:00 UTC on a Monday (and only if the
 last summary went out more than six days ago, so a run that slips by an
 hour doesn't skip a week), the loop posts one digest card instead of
-individual candidate cards for three buckets that never get their own:
+individual candidate cards for four buckets that never get their own:
 
+- **Seen once, not confirmed**: a gap nobody has confirmed an answer for
+  yet, held rather than posted after its first sighting (see Routing
+  above). It lists first, since it's usually the largest bucket.
 - **`UNFINDABLE`**: content that already exists and is correct, but search
   couldn't surface it.
 - **`HIDDEN`**: content that exists but is hidden from every tool, listed
