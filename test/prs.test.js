@@ -31,16 +31,26 @@ test('extractCandidateIds is pure: a second call on the same text is unaffected 
 
 // --- Cards v2: cards say "Gap #N", so the poller matches "gap #N" too -------
 
-test('extractCandidateIds: "Gap #12", "gap#12", "GAP # 7" and "candidate #3" all extract', () => {
+test('extractCandidateIds: "Gap #12", "gap#12", "GAP # 7", "candidate #3", "(gap #4)" and "mind-gap #1" all extract', () => {
   assert.deepEqual(extractCandidateIds('Gap #12'), [12]);
   assert.deepEqual(extractCandidateIds('gap#12'), [12]);
   assert.deepEqual(extractCandidateIds('GAP # 7'), [7]);
   assert.deepEqual(extractCandidateIds('candidate #3'), [3]);
+  assert.deepEqual(extractCandidateIds('(gap #4)'), [4], 'a non-word char before "gap" is still a boundary');
+  assert.deepEqual(extractCandidateIds('mind-gap #1'), [1], 'a hyphen before "gap" is still a boundary');
 });
 
 test('extractCandidateIds: "gaps #4" and "gapless #5" do not extract', () => {
   assert.deepEqual(extractCandidateIds('gaps #4'), []);
   assert.deepEqual(extractCandidateIds('gapless #5'), []);
+});
+
+test('extractCandidateIds: a word merely ending in "gap" or "candidate" does not extract', () => {
+  // A PR titled "Fix the stopgap #6" or "Rename megacandidate #2" must not be
+  // read as a reference to gap/candidate 6 or 2 -- \b is what stops it.
+  assert.deepEqual(extractCandidateIds('Fix the stopgap #6'), []);
+  assert.deepEqual(extractCandidateIds('Rename megacandidate #2'), []);
+  assert.deepEqual(extractCandidateIds('ungapped #8'), []);
 });
 
 test('extractCandidateIds: a mix of "gap #N" and "candidate #N" dedupes across both spellings', () => {

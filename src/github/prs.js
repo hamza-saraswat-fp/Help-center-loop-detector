@@ -11,13 +11,14 @@ const LANE = 'prs';
 
 // "candidate #N" or "gap #N" (cards say "Gap #N" since Cards v2), tolerant
 // of "candidate#N"/"gap#N" and stray spaces around the '#' since these show
-// up in freehand PR titles/bodies, e.g. "Docs: candidate # 12". No `\b` is
-// needed before the alternation: "gaps #4" and "gapless #5" already fail to
-// match because the character right after "gap" ('s'/'l') is neither
-// whitespace nor '#', so `\s*#` never finds anything to match. Global and
+// up in freehand PR titles/bodies, e.g. "Docs: candidate # 12". The leading
+// `\b` matters: without it "stopgap #6" or "megacandidate #2" -- ordinary
+// words in a PR title that happen to end in "gap"/"candidate" -- would match
+// and flip an unrelated gap's status. `\b` still allows "(gap #4)" and
+// "mind-gap #1", since '(' and '-' are non-word characters. Global and
 // case-insensitive so extractCandidateIds can walk every occurrence in one
 // pass.
-export const CANDIDATE_REF = /(?:candidate|gap)\s*#\s*(\d+)/gi;
+export const CANDIDATE_REF = /\b(?:candidate|gap)\s*#\s*(\d+)/gi;
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
