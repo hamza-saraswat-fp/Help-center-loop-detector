@@ -29,6 +29,24 @@ test('extractCandidateIds is pure: a second call on the same text is unaffected 
   assert.deepEqual(extractCandidateIds(text), [3]);
 });
 
+// --- Cards v2: cards say "Gap #N", so the poller matches "gap #N" too -------
+
+test('extractCandidateIds: "Gap #12", "gap#12", "GAP # 7" and "candidate #3" all extract', () => {
+  assert.deepEqual(extractCandidateIds('Gap #12'), [12]);
+  assert.deepEqual(extractCandidateIds('gap#12'), [12]);
+  assert.deepEqual(extractCandidateIds('GAP # 7'), [7]);
+  assert.deepEqual(extractCandidateIds('candidate #3'), [3]);
+});
+
+test('extractCandidateIds: "gaps #4" and "gapless #5" do not extract', () => {
+  assert.deepEqual(extractCandidateIds('gaps #4'), []);
+  assert.deepEqual(extractCandidateIds('gapless #5'), []);
+});
+
+test('extractCandidateIds: a mix of "gap #N" and "candidate #N" dedupes across both spellings', () => {
+  assert.deepEqual(extractCandidateIds('Fixes gap #9. See candidate #9 for context. Also gap#9.'), [9]);
+});
+
 test('prState: merged when merged_at is set', () => {
   assert.equal(prState({ merged_at: '2026-09-01T00:00:00Z', state: 'closed' }), 'merged');
 });
