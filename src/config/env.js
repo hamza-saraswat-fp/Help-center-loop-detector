@@ -98,6 +98,13 @@ export function loadEnv(envObject) {
 
   const mintlifyMcpUrl = envObject.MINTLIFY_MCP_URL || 'https://fieldpulse.mintlify.app/mcp';
 
+  // Base URL Sidecar conversation links are relative to (Cards v2's
+  // conversationLink in src/slack/blocks.js). Trailing slash trimmed so the
+  // builder can join it to a leading-slash path with plain concatenation.
+  // Default '' means a Sidecar event's relative source_link renders no
+  // button rather than a broken one.
+  const sidecarBaseUrl = (envObject.SIDECAR_BASE_URL || '').replace(/\/+$/, '');
+
   // -- Onyx corroboration (see Global Constraints for the ladder contract) --
   const onyxBaseUrl = (envObject.ONYX_BASE_URL || '').replace(/\/+$/, '');
   const onyxApiKey = envObject.ONYX_API_KEY || '';
@@ -146,6 +153,7 @@ export function loadEnv(envObject) {
     hcLoopOwnerMentions,
 
     mintlifyMcpUrl,
+    sidecarBaseUrl,
 
     onyxBaseUrl,
     onyxApiKey,
@@ -199,6 +207,7 @@ export const slackReactionUserIds = resolved?.slackReactionUserIds ?? [];
 export const hcLoopOwnerMentions = resolved?.hcLoopOwnerMentions ?? false;
 
 export const mintlifyMcpUrl = resolved?.mintlifyMcpUrl ?? 'https://fieldpulse.mintlify.app/mcp';
+export const sidecarBaseUrl = resolved?.sidecarBaseUrl ?? '';
 
 export const onyxBaseUrl = resolved?.onyxBaseUrl ?? '';
 export const onyxApiKey = resolved?.onyxApiKey ?? '';

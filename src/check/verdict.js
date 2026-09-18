@@ -60,6 +60,16 @@ function coerceString(value) {
   return typeof value === 'string' ? value.trim() : null;
 }
 
+// `headline` is the Slack card's plain-language lead sentence (Cards v2,
+// prompts/gap_check_v1_0_4.txt). Cut to 200 chars -- well above the prompt's
+// 140-char guidance, but a hard backstop against a model that ignores it,
+// matching the same defensive-cut pattern question_paraphrase's fallback
+// uses in runCheck.js.
+function coerceHeadline(value) {
+  const trimmed = coerceString(value);
+  return trimmed ? trimmed.slice(0, 200) : null;
+}
+
 function coerceConfidence(value) {
   if (typeof value !== 'number' || Number.isNaN(value)) return null;
   return Math.min(100, Math.max(0, Math.round(value)));
@@ -132,6 +142,7 @@ export function extractVerdict(text) {
     destination,
     verdict,
     question_paraphrase: coerceString(parsed.question_paraphrase),
+    headline: coerceHeadline(parsed.headline),
     truth_summary: coerceString(parsed.truth_summary),
     target_article_path: coerceString(parsed.target_article_path),
     target_article_url: coerceString(parsed.target_article_url),
