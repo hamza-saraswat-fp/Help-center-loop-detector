@@ -35,10 +35,12 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
         // Wider than the match itself needs: this row is what run.js's
         // duplicate path falls back to when `mergeEventIntoCandidate` fails,
         // and it reads verdict (to recompute priority), slack_ts and
-        // slack_channel (to reply in the card's thread) off it.
+        // slack_channel (to reply in the card's thread), and destination /
+        // evidence (to decide whether a held single is promoted once seen
+        // twice) off it.
         .select(
           'id, fingerprint_terms, status, last_seen, event_count, priority, needs_answer, ' +
-            'verdict, slack_ts, slack_channel, category, question_paraphrase',
+            'verdict, slack_ts, slack_channel, category, question_paraphrase, destination, evidence',
         )
         .eq('category', category)
         .gte('last_seen', cutoff);

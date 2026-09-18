@@ -187,6 +187,8 @@ const NEAR_DUPLICATE_COLUMNS = [
   'slack_channel',
   'category',
   'question_paraphrase',
+  'destination',
+  'evidence',
 ];
 
 // Mirrors the `select(...)` in src/db/candidates.js's linkedEvents. Kept
