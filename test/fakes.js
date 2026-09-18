@@ -189,6 +189,22 @@ const NEAR_DUPLICATE_COLUMNS = [
   'question_paraphrase',
 ];
 
+// Mirrors the `select(...)` in src/db/candidates.js's linkedEvents. Kept
+// narrow on purpose: a builder that reaches for a column outside this list
+// (say, `answer_text` instead of `truth_answer`) should fail here the same
+// way it would against the real projection, not quietly see the whole row.
+const LINKED_EVENT_COLUMNS = [
+  'id',
+  'source',
+  'occurred_at',
+  'truth_kind',
+  'source_link',
+  'needs_answer',
+  'detail',
+  'kind',
+  'truth_answer',
+];
+
 export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
   const failures = new Map();
 
@@ -361,7 +377,8 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
     async linkedEvents(candidateId) {
       return state.events
         .filter((e) => e.candidate_id === candidateId)
-        .sort((a, b) => new Date(b.occurred_at) - new Date(a.occurred_at));
+        .sort((a, b) => new Date(b.occurred_at) - new Date(a.occurred_at))
+        .map((e) => Object.fromEntries(LINKED_EVENT_COLUMNS.filter((column) => column in e).map((column) => [column, e[column]])));
     },
   };
 

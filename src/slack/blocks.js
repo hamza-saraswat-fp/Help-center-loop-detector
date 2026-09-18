@@ -89,13 +89,15 @@ const CLAUDE_LINE_RE = /^@claude\b/i;
 /**
  * Throws `ForbiddenMentionError` when `text` contains a Slack user mention
  * not in `allow` (bare `<@U012AB>` or labeled `<@U012AB|hamza>`), a broadcast
- * mention (`<!here>`/`<!channel>`/`<!everyone>`/`<!subteam^ID|@group>`),
- * or a line whose trimmed start is the literal "@Claude" — unless that line
- * starts with "To ship:" or "Reply in this thread with", or contains
- * "with *@Claude*" (the places the words are allowed, as text a human
- * types, not a mention: the old channel-post "To ship:" line and the
- * thread's "To fix it" instructions -- see buildGapThread). Returns `text`
- * unchanged otherwise.
+ * mention (`<!here>`/`<!channel>`/`<!everyone>`/`<!subteam^ID|@group>`), or a
+ * line whose trimmed start is the literal "@Claude". No content-based
+ * exemption exists for that last rule -- the two places the words "@Claude"
+ * are approved copy (buildGapThread's "To fix it" sentences) always put them
+ * mid-sentence, never at the start of a line, so they never need one. A
+ * one-line carve-out here would (and, in an earlier revision, did) let a
+ * model-written field smuggle a real "@Claude, do X" instruction past the
+ * guard by appending "with *@Claude*" to it. Returns `text` unchanged
+ * otherwise.
  * @param {string} text
  * @param {{allow?: string[]}} [opts]
  * @returns {string}
@@ -116,16 +118,35 @@ export function assertNoForbiddenMentions(text, { allow = [] } = {}) {
   }
 
   for (const line of text.split('\n')) {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith('To ship:')) continue;
-    if (trimmed.startsWith('Reply in this thread with')) continue;
-    if (trimmed.includes('with *@Claude*')) continue;
-    if (CLAUDE_LINE_RE.test(trimmed)) {
+    if (CLAUDE_LINE_RE.test(line.trimStart())) {
       throw new ForbiddenMentionError('forbidden literal "@Claude" at the start of a line');
     }
   }
 
   return text;
+}
+
+/**
+ * Runs `assertNoForbiddenMentions` (no exemptions, no allow-list) on every
+ * non-null string in `fields`, tagging a throw with which one failed. Called
+ * on each model-written or human-written input before a builder assembles
+ * its constant sentences around them, so a mention buried in, say,
+ * `should_say` is rejected at the field itself rather than relying on the
+ * one check over the fully assembled text to catch it.
+ * @param {Record<string, string|null|undefined>} fields
+ */
+function assertFieldsClean(fields) {
+  for (const [name, value] of Object.entries(fields)) {
+    if (value === null || value === undefined) continue;
+    try {
+      assertNoForbiddenMentions(value);
+    } catch (err) {
+      if (err instanceof ForbiddenMentionError) {
+        throw new ForbiddenMentionError(`${name}: ${err.message}`);
+      }
+      throw err;
+    }
+  }
 }
 
 /**
@@ -376,6 +397,12 @@ export function buildGapPost({ candidate, linked = [], now = new Date(), sidecar
   const title = articleTitle(candidate.target_article_path);
   const headline = candidate.headline || candidate.question_paraphrase;
 
+  // Every model- or human-written input, checked on its own before it is
+  // ever woven into a constant sentence -- see assertFieldsClean's doc
+  // comment for why this runs in addition to, not instead of, the check on
+  // the fully assembled text below.
+  assertFieldsClean({ headline, question_paraphrase: candidate.question_paraphrase, article_title: title });
+
   const headerLine = `${dot} *${label}*${title ? ` · ${title}` : ''}\n${headline}`;
   const reportedLine =
     linked.length > 1
@@ -419,7 +446,50 @@ function scrubNote(text) {
   return scrubbed.length > 300 ? `${scrubbed.slice(0, 299)}…` : scrubbed;
 }
 
-function whatHappenedSection(candidate, reportingEvent) {
+// A model- or human-written field can run to any length (`should_say` and
+// `proposed_change` in particular -- nothing upstream caps them the way
+// `headline` is capped at 200 chars). Truncating the *assembled* section
+// after the fact, at the final 3000-char guard, can land mid-sentence: it
+// has cut an unclosed ``` fence out of "To fix it" and silently dropped the
+// whole "It should say" draft in earlier revisions of this file. Budgeting
+// each variable field to a fixed size *before* it goes into a section
+// keeps every section's fixed copy -- headings, fences, the react-to-accept
+// sentence -- intact; the final 3000-char truncateSlackText in
+// buildGapThread stays only as a backstop for pathological input (e.g. a
+// field made almost entirely of embedded newlines), not the primary
+// defense.
+const FIELD_BUDGET = 700;
+const PASTE_REQUEST_BUDGET = 1500;
+
+function truncateField(value, max = FIELD_BUDGET) {
+  return value === null || value === undefined ? value : truncateSlackText(value, max);
+}
+
+/**
+ * Slack blockquotes only the line directly after a leading `>`, so a
+ * multi-line note, `says_now`, or draft needs `> ` on every line or its
+ * second line and beyond render unquoted, outside the box. Runs of blank
+ * lines collapse to a single bare `>` rather than one per line.
+ * @param {string} text
+ * @returns {string}
+ */
+function quote(text) {
+  const lines = String(text ?? '').split('\n');
+  const out = [];
+  let blankRun = false;
+  for (const line of lines) {
+    if (line.trim() === '') {
+      if (!blankRun) out.push('>');
+      blankRun = true;
+    } else {
+      out.push(`> ${line}`);
+      blankRun = false;
+    }
+  }
+  return out.length > 0 ? out.join('\n') : '>';
+}
+
+function whatHappenedSection({ candidate, reportingEvent, note }) {
   const question = candidate.question_paraphrase;
   let sentence;
   if (reportingEvent?.source === 'sidecar') {
@@ -431,8 +501,7 @@ function whatHappenedSection(candidate, reportingEvent) {
     sentence = `Someone asked: "${question}"`;
   }
 
-  const hasHumanNote = reportingEvent?.truth_kind === 'human' && Boolean(reportingEvent?.truth_answer);
-  if (!hasHumanNote) {
+  if (note === null) {
     return `*What happened*\n${sentence} Nobody has confirmed the right answer yet.`;
   }
 
@@ -447,37 +516,37 @@ function whatHappenedSection(candidate, reportingEvent) {
     lead = 'Someone answered:';
   }
 
-  const note = scrubNote(reportingEvent.truth_answer);
-  return `*What happened*\n${sentence} ${lead}\n> ${note}`;
+  return `*What happened*\n${sentence} ${lead}\n${quote(note)}`;
 }
 
-function articleTodaySection(candidate) {
-  let todayLine;
-  if (candidate.says_now) {
-    todayLine = `> ${candidate.says_now}`;
-  } else if (candidate.target_article_path) {
-    todayLine = `> Nothing about this. The closest article is ${articleTitle(candidate.target_article_path)}.`;
+function articleTodaySection({ candidate, title, saysNow, draftRaw }) {
+  let todayText;
+  if (saysNow) {
+    todayText = truncateField(saysNow);
+  } else if (title) {
+    todayText = `Nothing about this. The closest article is ${title}.`;
   } else {
-    todayLine = '> No article covers this.';
+    todayText = 'No article covers this.';
   }
 
-  let block = `*The article says today*\n${todayLine}`;
+  let block = `*The article says today*\n${quote(todayText)}`;
 
-  const draft = candidate.should_say ?? candidate.proposed_change ?? null;
-  if (draft !== null) {
+  if (draftRaw !== null) {
+    const draft = truncateField(draftRaw);
     const heading = candidate.verdict === 'MISSING' ? 'Add this' : 'It should say';
     const finalHeading = candidate.needs_answer
       ? `Draft, unconfirmed: ${heading.charAt(0).toLowerCase()}${heading.slice(1)}`
       : heading;
-    block += `\n*${finalHeading}*\n> ${draft}`;
+    block += `\n*${finalHeading}*\n${quote(draft)}`;
   }
 
   return block;
 }
 
-function toFixItSection(candidate) {
+function toFixItSection({ candidate, pasteRequest }) {
   const hasDraft = Boolean(candidate.should_say || candidate.proposed_change);
   const lowConfidence = typeof candidate.confidence === 'number' && candidate.confidence < 40;
+  const request = truncateField(pasteRequest, PASTE_REQUEST_BUDGET);
 
   if (lowConfidence || (candidate.needs_answer && !hasDraft)) {
     return (
@@ -490,23 +559,23 @@ function toFixItSection(candidate) {
     return (
       '*To fix it*\n' +
       'Nobody has confirmed this yet. If the draft below is right, reply in this thread with *@Claude* and the request. If you are not sure, leave it and react :x: or ask the product owner.\n' +
-      `\`\`\`${buildPasteRequest(candidate)}\`\`\``
+      `\`\`\`${request}\`\`\``
     );
   }
 
   return (
     '*To fix it*\n' +
     'Reply in this thread with *@Claude* and the request below. Claude opens the change for you to approve in #mintlify-admin, same as always.\n' +
-    `\`\`\`${buildPasteRequest(candidate)}\`\`\`\n` +
+    `\`\`\`${request}\`\`\`\n` +
     "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap."
   );
 }
 
-function howSureSection(candidate) {
+function howSureSection({ candidate, title, saysNow }) {
   const m = (candidate.evidence?.files_read ?? []).length;
   let ending;
-  if (candidate.says_now) {
-    ending = ` and found that sentence in ${articleTitle(candidate.target_article_path)}`;
+  if (saysNow) {
+    ending = ` and found that sentence in ${title}`;
   } else if (candidate.verdict === 'MISSING') {
     ending = '; none of them cover this';
   } else {
@@ -519,8 +588,12 @@ function howSureSection(candidate) {
  * The thread reply: the story of what happened, what the article says
  * today vs. what it should say, how to fix it (three variants depending on
  * confidence and whether an answer is confirmed yet), and how sure the loop
- * is. `{ text, blocks }` ready for `replyInThread`. Runs
- * `assertNoForbiddenMentions` on the assembled content before returning.
+ * is. `{ text, blocks }` ready for `replyInThread`. Every model- or
+ * human-written field (the question paraphrase, the rep/owner note,
+ * `says_now`, the draft, the paste request, the article title) is checked
+ * with `assertNoForbiddenMentions` on its own, before any of the builder's
+ * constant sentences are woven around it; the fully assembled text is
+ * checked again as a backstop.
  * @param {{candidate:object, linked?:Array<object>, now?:Date}} args
  * @returns {{text:string, blocks:Array<object>}}
  */
@@ -528,11 +601,27 @@ export function buildGapThread({ candidate, linked = [], now = new Date() }) {
   void now;
   const reportingEvent = pickReportingEvent(linked);
 
+  const title = articleTitle(candidate.target_article_path);
+  const hasHumanNote = reportingEvent?.truth_kind === 'human' && Boolean(reportingEvent?.truth_answer);
+  const note = hasHumanNote ? scrubNote(reportingEvent.truth_answer) : null;
+  const saysNow = candidate.says_now ?? null;
+  const draftRaw = candidate.should_say ?? candidate.proposed_change ?? null;
+  const pasteRequest = buildPasteRequest(candidate);
+
+  assertFieldsClean({
+    question_paraphrase: candidate.question_paraphrase,
+    note,
+    says_now: saysNow,
+    draft: draftRaw,
+    paste_request: pasteRequest,
+    article_title: title,
+  });
+
   const sections = [
-    whatHappenedSection(candidate, reportingEvent),
-    articleTodaySection(candidate),
-    toFixItSection(candidate),
-    howSureSection(candidate),
+    whatHappenedSection({ candidate, reportingEvent, note }),
+    articleTodaySection({ candidate, title, saysNow, draftRaw }),
+    toFixItSection({ candidate, pasteRequest }),
+    howSureSection({ candidate, title, saysNow }),
   ];
 
   const fullPlainText = sections.join('\n\n');

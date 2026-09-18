@@ -486,6 +486,18 @@ test('linkedEvents: gap_events rows for a candidate, ordered occurred_at desc', 
   assert.deepEqual(selectCall.order, ['occurred_at', { ascending: false }]);
 });
 
+test('linkedEvents: selects exactly the columns Cards v2 needs (kind and truth_answer included)', async () => {
+  const { client, calls } = fakeSupabase({ 'gap_events.select': { data: [], error: null } });
+  const candidates = createCandidatesRepo({ client, now });
+
+  await candidates.linkedEvents(9);
+
+  assert.equal(
+    calls[0].select,
+    'id, source, occurred_at, truth_kind, source_link, needs_answer, detail, kind, truth_answer',
+  );
+});
+
 // ---------------------------------------------------------------------------
 // actions.js
 // ---------------------------------------------------------------------------
