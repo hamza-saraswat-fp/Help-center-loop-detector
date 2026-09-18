@@ -57,6 +57,38 @@ const MAX_CHECK_ATTEMPTS = 3;
 // go to the weekly summary instead, NOT_A_GAP goes nowhere.
 const LOGGED_VERDICTS = new Set(['NOT_A_GAP', 'UNFINDABLE', 'HIDDEN']);
 
+// A help-center-bound gap with no confirmed answer yet is not posted on its
+// first sighting; it is logged with this reason so a second sighting (or a
+// re-check that brings human truth) can promote it. Only these three
+// verdicts ever reach a card at all, so they are the only ones a held
+// candidate can carry.
+const HOLD_REASON_UNCONFIRMED = 'unconfirmed_single';
+const HELD_PROMOTABLE_VERDICTS = new Set(['MISSING', 'INCORRECT', 'NEEDS_EDIT']);
+
+// The `loop_runs` columns `finishRun`'s payload is allowed to touch --
+// see migrations/0001_loop_schema.sql. `stats` carries fields (`results`,
+// `held_unconfirmed`) that exist for logging and the caller's return value
+// but are not columns; sending them through would fail the update.
+const LOOP_RUNS_COLUMNS = [
+  'mode',
+  'git_sha',
+  'docs_sha',
+  'events_pulled',
+  'events_by_source',
+  'candidates_new',
+  'duplicates',
+  'held',
+  'cards_posted',
+  'checks_failed',
+  'cost_usd',
+  'summary_posted',
+  'errors',
+];
+
+function ledgerPayload(stats) {
+  return Object.fromEntries(LOOP_RUNS_COLUMNS.filter((key) => key in stats).map((key) => [key, stats[key]]));
+}
+
 // Weekly summary window: the first run after 14:00 UTC on a Monday, and only
 // when the last one went out more than six days ago (six, not seven, so a run
 // that slips by an hour week to week doesn't skip a week entirely).
@@ -156,6 +188,7 @@ export function createRun({
       candidates_new: 0,
       duplicates: 0,
       held: 0,
+      held_unconfirmed: 0,
       cards_posted: 0,
       checks_failed: 0,
       cost_usd: 0,
@@ -427,6 +460,27 @@ export function createRun({
             }
           }
 
+          // A held single (logged for HOLD_REASON_UNCONFIRMED) is promoted
+          // to 'new' the moment a second sighting lands, so the posting loop
+          // below picks it up in this same run -- the same way a re-check's
+          // promotion does. Only a candidate held for exactly that reason is
+          // eligible: one logged as internal, NOT_A_GAP, UNFINDABLE, or
+          // HIDDEN never gets a second look just because it was seen again.
+          const heldReason = existing.evidence?.hold_reason ?? null;
+          const eligibleForPromotion =
+            existing.status === 'logged' &&
+            existing.destination === 'help_center' &&
+            HELD_PROMOTABLE_VERDICTS.has(existing.verdict) &&
+            heldReason === HOLD_REASON_UNCONFIRMED &&
+            (merged.event_count ?? existing.event_count ?? 0) >= 2;
+
+          if (eligibleForPromotion) {
+            const clearedEvidence = { ...(merged.evidence ?? existing.evidence ?? {}) };
+            delete clearedEvidence.hold_reason;
+            await candidates.updateCandidate(existing.id, { status: 'new', evidence: clearedEvidence });
+            log(LANE, `candidate #${existing.id} promoted from a held single: seen again from ${label}`);
+          }
+
           // `existing` may be a near-duplicate row, which carries no
           // slack_ts; `merged` is the full row the update returned.
           const slackTs = merged.slack_ts ?? existing.slack_ts ?? null;
@@ -478,11 +532,6 @@ export function createRun({
           return;
         }
 
-        // Only a help-center-bound gap earns a card; everything else is
-        // recorded for the weekly summary.
-        const status =
-          result.destination !== 'help_center' || LOGGED_VERDICTS.has(result.verdict) ? 'logged' : 'new';
-
         // `upgradedTruthKind` is the identity function unless ONYX_MODE is
         // `live` (resolved once at the top of the run).
         let truthKind = event.truth_kind;
@@ -490,6 +539,18 @@ export function createRun({
         if (Array.isArray(onyxHits) && onyxHits.length > 0) {
           truthKind = upgradedTruthKind(truthKind, onyxHits);
         }
+        const needsAnswer = truthKind === 'none';
+
+        // Only a help-center-bound gap earns a card at all; everything else
+        // is recorded for the weekly summary. Among those, one nobody has
+        // confirmed an answer for is *held* rather than posted on its first
+        // sighting -- it stays 'logged', with `evidence.hold_reason` marking
+        // why, until a second sighting or a re-check that brings human truth
+        // promotes it (see the duplicate branch above and the re-check
+        // branch below).
+        const wouldCard = result.destination === 'help_center' && !LOGGED_VERDICTS.has(result.verdict);
+        const holdReason = wouldCard && needsAnswer ? HOLD_REASON_UNCONFIRMED : null;
+        const status = wouldCard && !holdReason ? 'new' : 'logged';
 
         const priority = computePriority({ verdict: result.verdict, events: [event], now: startedAt });
         const trace = getTrace();
@@ -502,7 +563,7 @@ export function createRun({
             LANE,
             `dry-run result: ${label} verdict=${result.verdict} destination=${result.destination} ` +
               `priority=${priority} target=${result.target_article_path} confidence=${result.confidence} ` +
-              `${team ? `team=${team} ` : ''}"${result.question_paraphrase}"`,
+              `${holdReason ? `held=${holdReason} ` : ''}${team ? `team=${team} ` : ''}"${result.question_paraphrase}"`,
           );
           return;
         }
@@ -525,7 +586,7 @@ export function createRun({
               now: startedAt,
             }),
             truth_kind: truthKind,
-            needs_answer: truthKind === 'none',
+            needs_answer: needsAnswer,
             question_paraphrase: result.question_paraphrase,
             headline: result.headline,
             truth_summary: result.truth_summary,
@@ -536,7 +597,13 @@ export function createRun({
             proposed_change: result.proposed_change,
             paste_request: result.paste_request,
             confidence: result.confidence,
-            evidence: { ...result.evidence, trace },
+            // A fresh `evidence` from this check, not a merge with the old
+            // one: a held single's `hold_reason` is written here when the
+            // re-check still finds no answer, and silently dropped (by
+            // simply not being in `result.evidence`) the moment it does --
+            // that is what "a re-check that turns needs_answer false clears
+            // hold_reason" means in practice, with no separate delete.
+            evidence: { ...result.evidence, trace, ...(holdReason ? { hold_reason: holdReason } : {}) },
             // No `last_seen`: this is an event the candidate already counted,
             // and writing its occurred_at back would drag the timestamp
             // backwards past later sightings.
@@ -569,8 +636,9 @@ export function createRun({
           truth_kind: truthKind,
           // An event with no corroborated answer is a question for a human,
           // not a documentation edit -- that is what turns the card into a
-          // "needs answer" ping below.
-          needs_answer: truthKind === 'none',
+          // "needs answer" ping below, or (when the candidate isn't posted
+          // at all yet) what holds it as a single unconfirmed sighting.
+          needs_answer: needsAnswer,
           question_paraphrase: result.question_paraphrase,
           headline: result.headline,
           truth_summary: result.truth_summary,
@@ -583,8 +651,9 @@ export function createRun({
           confidence: result.confidence,
           // `docs_sha` is not a gap_candidates column: the sha the verdict
           // was reached against travels inside `evidence`, where runCheck
-          // already puts it.
-          evidence: { ...result.evidence, trace },
+          // already puts it. `hold_reason` lands here too, for the same
+          // reason -- it is not a column either.
+          evidence: { ...result.evidence, trace, ...(holdReason ? { hold_reason: holdReason } : {}) },
           status,
           first_seen: event.occurred_at,
           last_seen: event.occurred_at,
@@ -597,6 +666,7 @@ export function createRun({
         }
 
         stats.candidates_new += 1;
+        if (holdReason) stats.held_unconfirmed += 1;
         await candidates.linkEvent(candidate.id, event.id);
         await events.markProcessed(event.id, 'candidate', { candidateId: candidate.id });
         log(LANE, `candidate #${candidate.id} ${result.verdict} ${status} from ${label}`);
@@ -711,9 +781,11 @@ export function createRun({
           // an empty summary forever once the logged backlog passes one page.
           const logged = await candidates.listByStatus(['logged'], { since, limit: SUMMARY_MAX_ROWS });
 
-          // Three buckets, each a thing that gets no card of its own:
-          // findable-but-not-found, present-but-hidden, and not ours at all.
+          // Four buckets, each a thing that gets no card of its own: seen
+          // once but unconfirmed, findable-but-not-found, present-but-hidden,
+          // and not ours at all.
           const summary = {
+            unconfirmed: logged.filter((c) => c.evidence?.hold_reason === HOLD_REASON_UNCONFIRMED),
             unfindable: logged.filter((c) => c.destination !== 'internal' && c.verdict === 'UNFINDABLE'),
             hidden: logged.filter((c) => c.destination !== 'internal' && c.verdict === 'HIDDEN'),
             internal: logged.filter((c) => c.destination === 'internal'),
@@ -744,7 +816,7 @@ export function createRun({
       // the others, and must not turn a finished run into a thrown one.
       await settle(() => mintlify.close(), 'closing the Mintlify client');
       await settle(() => sourceReader.closeSourcePools(), 'closing the source pools');
-      await settle(() => runs.finishRun(runId, stats), 'closing the run row');
+      await settle(() => runs.finishRun(runId, ledgerPayload(stats)), 'closing the run row');
     }
 
     log(LANE, 'done', stats);
