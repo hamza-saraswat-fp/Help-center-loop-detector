@@ -1294,6 +1294,13 @@ test('--dry-run wins over a live HC_LOOP_MODE', async () => {
 
 // --- weekly summary --------------------------------------------------------
 
+// A Monday run past 14:00 UTC also posts the daily check (tested further
+// down), so these tests pick out the weekly summary rather than counting
+// every post.
+function weeklyPosts(poster) {
+  return poster.posts.filter((p) => /^Weekly summary/.test(p.card.text));
+}
+
 function weeklySeed() {
   const base = {
     fingerprint_terms: [],
@@ -1319,11 +1326,12 @@ test('the weekly summary posts on a Monday afternoon when none went out this wee
 
   const { stats } = await run(args());
 
-  assert.equal(poster.posts.length, 1);
-  assert.match(poster.posts[0].card.text, /^Weekly summary since/);
-  assert.match(poster.posts[0].card.text, /Exists but hard to find \(1\)/);
-  assert.match(poster.posts[0].card.text, /Exists but hidden \(1\)/);
-  assert.match(poster.posts[0].card.text, /Internal, not for the help center \(1\)/);
+  const [weekly, ...rest] = weeklyPosts(poster);
+  assert.equal(rest.length, 0);
+  assert.match(weekly.card.text, /^Weekly summary since/);
+  assert.match(weekly.card.text, /Exists but hard to find \(1\)/);
+  assert.match(weekly.card.text, /Exists but hidden \(1\)/);
+  assert.match(weekly.card.text, /Internal, not for the help center \(1\)/);
   assert.equal(stats.summary_posted, true);
   assert.equal(repos.state.runs[0].summary_posted, true);
 });
@@ -1347,7 +1355,7 @@ test('the weekly summary does not post twice in one week, nor off-Monday', async
     },
   });
   await recent.run(args());
-  assert.equal(recent.poster.posts.length, 0, 'a summary went out two days ago');
+  assert.equal(weeklyPosts(recent.poster).length, 0, 'a summary went out two days ago');
 
   const wednesday = harness({ now: () => NOW, seed: weeklySeed() });
   await wednesday.run(args());
@@ -1365,6 +1373,102 @@ test('dry_run never posts a weekly summary', async () => {
 
   assert.equal(poster.posts.length, 0);
   assert.notEqual(stats.summary_posted, true);
+});
+
+// --- daily check -------------------------------------------------------------
+
+const TUESDAY_MORNING = new Date('2026-09-22T14:04:00.000Z'); // 9:04 AM Central
+
+function dailyPosts(poster) {
+  return poster.posts.filter((p) => /^Daily check:/.test(p.card.text));
+}
+
+test('the daily check posts on a weekday morning, with its details as a thread reply, and marks the run', async () => {
+  const { run, poster, repos } = harness({ now: () => TUESDAY_MORNING });
+
+  const { stats } = await run(args());
+
+  const [post, ...rest] = dailyPosts(poster);
+  assert.equal(rest.length, 0);
+  assert.match(post.card.blocks[0].text.text, /^:bar_chart: \*Daily check\* · Tue, Sep 22\n/);
+  const reply = poster.replies.find((p) => p.card.text === 'Daily check details');
+  assert.ok(reply, 'the details are posted');
+  assert.equal(reply.threadTs, post.ts, 'as a reply in the daily check thread');
+  assert.equal(stats.overview_posted, true);
+  assert.equal(repos.state.runs[0].overview_posted, true);
+});
+
+test('the daily check does not post before 9 AM Central, on a weekend, in dry_run, or twice in a day', async () => {
+  const early = harness({ now: () => new Date('2026-09-22T13:04:00.000Z') });
+  await early.run(args());
+  assert.equal(dailyPosts(early.poster).length, 0, 'before 14:00 UTC');
+
+  const saturday = harness({ now: () => new Date('2026-09-19T15:04:00.000Z') });
+  await saturday.run(args());
+  assert.equal(dailyPosts(saturday.poster).length, 0, 'a Saturday');
+
+  const dry = harness({ now: () => TUESDAY_MORNING });
+  await dry.run(args({ dryRun: true }));
+  assert.equal(dailyPosts(dry.poster).length, 0, 'dry_run');
+
+  const again = harness({
+    now: () => new Date('2026-09-22T16:04:00.000Z'),
+    seed: { runs: [{ id: 1, mode: 'live', started_at: '2026-09-22T14:04:00.000Z', finished_at: '2026-09-22T14:06:00.000Z', overview_posted: true, errors: [] }] },
+  });
+  await again.run(args());
+  assert.equal(dailyPosts(again.poster).length, 0, 'one already went out two hours ago');
+});
+
+test("Monday's daily check covers everything since Friday's", async () => {
+  const friday = '2026-09-18T14:04:00.000Z';
+  const { run, poster } = harness({
+    now: () => new Date('2026-09-21T14:04:00.000Z'),
+    seed: {
+      runs: [{ id: 1, mode: 'live', started_at: friday, finished_at: '2026-09-18T14:06:00.000Z', overview_posted: true, summary_posted: true, errors: [] }],
+      candidates: [
+        { id: 1, fingerprint: 'fp-1', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'MISSING', status: 'logged', question_paraphrase: 'Asked on Saturday', evidence: { hold_reason: 'unconfirmed_single' }, created_at: '2026-09-19T10:00:00.000Z' },
+        { id: 2, fingerprint: 'fp-2', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'MISSING', status: 'logged', question_paraphrase: 'Asked before the window', evidence: { hold_reason: 'unconfirmed_single' }, created_at: '2026-09-17T10:00:00.000Z' },
+      ],
+    },
+  });
+
+  await run(args());
+
+  assert.match(dailyPosts(poster)[0].card.blocks[0].text.text, /since Friday\.\n.*\*1\* real gap held/);
+  const details = poster.replies.find((p) => p.card.text === 'Daily check details').card.blocks.map((b) => b.text.text).join('\n');
+  assert.match(details, /#1 Asked on Saturday/);
+  assert.doesNotMatch(details, /Asked before the window/);
+});
+
+test('a daily check that cannot be built is recorded, not thrown, and nothing is marked', async () => {
+  const { run, poster } = harness({
+    now: () => TUESDAY_MORNING,
+    seed: {
+      candidates: [
+        { id: 1, fingerprint: 'fp-1', fingerprint_terms: [], category: 'general', destination: 'none', verdict: 'NOT_A_GAP', status: 'logged', question_paraphrase: 'Ask <@U123> about exports', evidence: {}, created_at: '2026-09-22T10:00:00.000Z' },
+      ],
+    },
+  });
+
+  const { exitCode, stats } = await run(args());
+
+  assert.equal(exitCode, 0);
+  assert.equal(dailyPosts(poster).length, 0);
+  assert.notEqual(stats.overview_posted, true);
+  assert.deepEqual(stats.errors.map((e) => e.lane), ['slack']);
+  assert.match(stats.errors[0].message, /^the daily check: /);
+});
+
+test('a ledger read that throws during the daily check does not fail the run', async () => {
+  const { run, deps } = harness({ now: () => TUESDAY_MORNING });
+  deps.runs.listRunsSince = async () => {
+    throw new Error('ledger down');
+  };
+
+  const { exitCode, stats } = await createRun(deps)(args());
+
+  assert.equal(exitCode, 0);
+  assert.match(stats.errors[0].message, /^the daily check: ledger down/);
 });
 
 // --- poll seams ------------------------------------------------------------
@@ -1546,7 +1650,7 @@ test('a weekly summary that cannot be built is recorded, not thrown', async () =
   const { exitCode, stats } = await run(args());
 
   assert.equal(exitCode, 0);
-  assert.equal(poster.posts.length, 0);
+  assert.equal(weeklyPosts(poster).length, 0);
   assert.notEqual(stats.summary_posted, true);
   assert.equal(stats.errors.length, 1);
   assert.equal(stats.errors[0].lane, 'slack');

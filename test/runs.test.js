@@ -36,6 +36,10 @@ function makeClient(responses = {}) {
           chain.not = [col, op, val];
           return q;
         },
+        gt(col, val) {
+          chain.gt = [col, val];
+          return q;
+        },
         order(col, opts) {
           chain.order = [col, opts];
           return q;
@@ -233,4 +237,52 @@ test('lastSummaryAt returns null instead of throwing when the select fails', asy
   const runs = createRunsRepo({ client });
 
   assert.equal(await runs.lastSummaryAt(), null);
+});
+
+// ---------------------------------------------------------------------------
+// lastOverviewAt / listRunsSince — the daily check
+// ---------------------------------------------------------------------------
+
+test('lastOverviewAt returns the newest started_at of a run that posted a daily check', async () => {
+  const { client, state } = makeClient({
+    select: { data: [{ started_at: '2026-09-21T14:03:00.000Z' }], error: null },
+  });
+  const runs = createRunsRepo({ client });
+
+  assert.equal(await runs.lastOverviewAt(), '2026-09-21T14:03:00.000Z');
+
+  const call = state.selects[0];
+  assert.equal(call.table, 'loop_runs');
+  assert.deepEqual(call.eq, ['overview_posted', true]);
+  assert.deepEqual(call.order, ['started_at', { ascending: false }]);
+  assert.equal(call.limit, 1);
+});
+
+test('lastOverviewAt returns null when none has been posted, and when the select fails', async () => {
+  assert.equal(await createRunsRepo({ client: makeClient({ select: { data: [], error: null } }).client }).lastOverviewAt(), null);
+  assert.equal(
+    await createRunsRepo({ client: makeClient({ select: { data: null, error: { message: 'boom' } } }).client }).lastOverviewAt(),
+    null,
+  );
+});
+
+test('listRunsSince reads runs that started AFTER since, oldest first', async () => {
+  const rows = [{ id: 7, started_at: '2026-09-21T15:03:00.000Z' }];
+  const { client, state } = makeClient({ select: { data: rows, error: null } });
+  const runs = createRunsRepo({ client });
+
+  assert.deepEqual(await runs.listRunsSince('2026-09-21T14:03:00.000Z'), rows);
+
+  const call = state.selects[0];
+  assert.equal(call.table, 'loop_runs');
+  // Strictly after: `since` is the start of the run that posted the previous
+  // daily check, and that run belongs to the previous window.
+  assert.deepEqual(call.gt, ['started_at', '2026-09-21T14:03:00.000Z']);
+  assert.deepEqual(call.order, ['started_at', { ascending: true }]);
+  assert.equal(call.limit, 500);
+});
+
+test('listRunsSince returns [] instead of throwing when the select fails', async () => {
+  const { client } = makeClient({ select: { data: null, error: { message: 'boom' } } });
+  assert.deepEqual(await createRunsRepo({ client }).listRunsSince('2026-09-21T14:03:00.000Z'), []);
 });

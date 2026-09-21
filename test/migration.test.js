@@ -75,3 +75,13 @@ test('0008 makes one row per Slack message, so re-reading a thread is a no-op', 
     /create unique index if not exists gap_actions_human_reply_idx\s+on gap_actions \(candidate_id, slack_ts\)\s+where action = 'human_reply'/,
   );
 });
+
+// --- 0009: the daily check marker ------------------------------------------------
+
+test('0009 adds loop_runs.overview_posted, additive and defaulting to false', () => {
+  const overviewSql = readFileSync(new URL('../migrations/0009_overview_posted.sql', import.meta.url), 'utf8');
+  assert.match(
+    overviewSql,
+    /alter table loop_runs add column if not exists overview_posted boolean not null default false;/,
+  );
+});

@@ -278,6 +278,16 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       }
       return { inserted: 0, updated: 0, reset: 0 };
     },
+    async countProcessedSince(since) {
+      const counts = { total: 0, byOutcome: {}, bySource: {} };
+      for (const e of state.events) {
+        if (!e.processed_at || new Date(e.processed_at) < new Date(since)) continue;
+        counts.total += 1;
+        counts.byOutcome[e.outcome] = (counts.byOutcome[e.outcome] ?? 0) + 1;
+        counts.bySource[e.source] = (counts.bySource[e.source] ?? 0) + 1;
+      }
+      return counts;
+    },
     async listUnprocessed({ limit } = {}) {
       const pending = state.events
         .filter((e) => e.processed_at === null || e.processed_at === undefined)
@@ -455,6 +465,16 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
     async lastSummaryAt() {
       const posted = newestFirst(state.runs.filter((r) => r.summary_posted));
       return posted[0]?.started_at ?? null;
+    },
+    async lastOverviewAt() {
+      const posted = newestFirst(state.runs.filter((r) => r.overview_posted));
+      return posted[0]?.started_at ?? null;
+    },
+    async listRunsSince(since) {
+      return state.runs
+        .filter((r) => new Date(r.started_at) > new Date(since))
+        .sort((a, b) => new Date(a.started_at) - new Date(b.started_at))
+        .map((r) => ({ ...r }));
     },
   };
 

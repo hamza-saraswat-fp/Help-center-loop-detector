@@ -16,6 +16,8 @@ import {
   buildGapThread,
   buildDuplicateReply,
   buildWeeklySummary,
+  buildDailyPost,
+  buildDailyThread,
   buildPasteRequest,
   buildClaudeRequest,
   truncateSlackText,
@@ -23,6 +25,8 @@ import {
   ForbiddenMentionError,
   ownersFor,
 } from '../src/slack/blocks.js';
+import { summarizeDay } from '../src/overview.js';
+import { sampleDayInput } from './fixtures/daily-check-sample.js';
 
 const NOW = new Date('2026-09-15T12:00:00Z');
 
@@ -791,6 +795,120 @@ test("buildWeeklySummary: a rejected card's reasons are scrubbed of mentions and
 test('buildWeeklySummary: no rejections still renders the section, at zero', () => {
   const summary = buildWeeklySummary({ since: '2026-09-14T14:00:00Z', now: NOW });
   assert.match(summary.text, /Rejected, and why \(0\)$/);
+});
+
+// --- daily check -----------------------------------------------------------------
+
+function daySummary(overrides = {}) {
+  return summarizeDay({ ...sampleDayInput(), ...overrides });
+}
+
+test('buildDailyPost: header, what it looked at, the three counts, and a running-normally line', () => {
+  const post = buildDailyPost(daySummary());
+  assert.equal(
+    post.blocks[0].text.text,
+    ':bar_chart: *Daily check* · Mon, Sep 21\n' +
+      'The loop looked at *8 questions* from Sidecar and Juju since Friday.\n' +
+      ':white_check_mark: *0* cards posted    :hourglass_flowing_sand: *2* real gaps held    :no_entry_sign: *3* not for the help center    :repeat: *3* asked again',
+  );
+  assert.equal(post.blocks[1].type, 'context');
+  assert.equal(
+    post.blocks[1].elements[0].text,
+    '_Running normally: 72 of 72 hourly checks, no errors · 1 card waiting · details in the thread_ :arrow_down:',
+  );
+  assert.equal(post.blocks.length, 2);
+  assert.equal(post.text, 'Daily check: 8 questions looked at, 0 cards posted, 2 held');
+});
+
+test('buildDailyPost: a one-day window says "since yesterday", and singulars read right', () => {
+  const post = buildDailyPost(
+    daySummary({
+      since: '2026-09-21T14:04:00.000Z',
+      now: new Date('2026-09-22T14:04:00.000Z'),
+      runs: sampleDayInput().runs.slice(0, 24).map((r, i) => ({ ...r, cards_posted: i === 0 ? 1 : 0 })),
+      candidates: sampleDayInput().candidates.slice(0, 1),
+      eventCounts: { total: 1, byOutcome: { candidate: 1 }, bySource: { sidecar: 1 } },
+    }),
+  );
+  const text = post.blocks[0].text.text;
+  assert.match(text, /\*Daily check\* · Tue, Sep 22/);
+  assert.match(text, /looked at \*1 question\* from Sidecar since yesterday\./);
+  assert.match(text, /\*1\* card posted {4}:hourglass_flowing_sand: \*1\* real gap held/);
+  assert.doesNotMatch(text, /asked again/);
+});
+
+test('buildDailyPost: a day with nothing in it is two lines and still says it is running', () => {
+  const post = buildDailyPost(daySummary({ candidates: [], eventCounts: { total: 0, byOutcome: {}, bySource: {} } }));
+  assert.equal(
+    post.blocks[0].text.text,
+    ':bar_chart: *Daily check* · Mon, Sep 21\nNo new questions came in from Sidecar or Juju since Friday.',
+  );
+  assert.match(post.blocks[1].elements[0].text, /^_Running normally: 72 of 72 hourly checks/);
+});
+
+test('buildDailyPost: a warning replaces the running-normally line', () => {
+  const post = buildDailyPost(daySummary({ latestBySource: { sidecar: 111 }, runs: sampleDayInput().runs.slice(0, 50) }));
+  assert.equal(
+    post.blocks[1].elements[0].text,
+    ':warning: *Only 50 of 72 hourly checks ran · Juju sent nothing* · 1 card waiting · details in the thread :arrow_down:',
+  );
+});
+
+test('buildDailyThread: every group with its reason, then cards, then under the hood', () => {
+  const texts = buildDailyThread(daySummary()).blocks.map((b) => b.text.text);
+  assert.equal(texts.length, 7);
+  assert.match(texts[0], /^\*Held: real gaps, seen once, nobody confirmed \(2\)\*\nThese become cards the moment someone asks again or confirms the answer\. They are also in Monday's summary\.\n• #183 /);
+  assert.match(texts[0], /• #183 The article does not say whether timesheets survive a user being deactivated\. · Employee Timesheets/);
+  assert.equal(texts[1], "*Not a gap (1)*\nThe help center already answers these, or the question is about one account's own data.\n• #192 Can the daily or weekly work log report include job notes");
+  assert.equal(texts[2], '*Already covered, but the tools could not find it (1)*\nA search problem, not a writing problem.\n• #202 Can you make a tech support request · Reach Support');
+  assert.equal(texts[3], '*Internal, not for the help center (1)*\nThese belong in a runbook or a process doc.\n• #199 How to fix invoices affected by rounding');
+  assert.equal(texts[4], '*Asked again (3)*\nRepeats of questions the loop already knows about.');
+  assert.equal(texts[5], '*Cards*\n1 waiting (oldest: Gap #9, 5 days) · 0 fixed · 0 rejected since Friday');
+  assert.equal(texts[6], '*Under the hood*\n72 of 72 hourly checks ran · Juju 65 rows · Sidecar 111 rows · $1.80');
+});
+
+test('buildDailyThread: empty groups are left out, and a quiet day says so', () => {
+  const texts = buildDailyThread(
+    daySummary({ candidates: [], eventCounts: { total: 0, byOutcome: {}, bySource: {} }, waiting: [] }),
+  ).blocks.map((b) => b.text.text);
+  assert.deepEqual(texts, [
+    'Nothing new came in since Friday.',
+    '*Cards*\n0 waiting · 0 fixed · 0 rejected since Friday',
+    '*Under the hood*\n72 of 72 hourly checks ran · Juju 65 rows · Sidecar 111 rows · $1.80',
+  ]);
+});
+
+test('buildDailyThread: a long group lists ten and counts the rest; a long question is cut', () => {
+  const many = Array.from({ length: 14 }, (_, i) => ({
+    id: 300 + i,
+    status: 'logged',
+    destination: 'help_center',
+    verdict: 'MISSING',
+    question_paraphrase: i === 0 ? 'x'.repeat(400) : `Question ${i}`,
+    evidence: { hold_reason: 'unconfirmed_single' },
+  }));
+  const held = buildDailyThread(daySummary({ candidates: many })).blocks[0].text.text;
+  assert.match(held, /\(14\)\*/);
+  assert.equal(held.split('\n').filter((l) => l.startsWith('• ')).length, 10);
+  assert.match(held, /…and 4 more$/);
+  assert.ok(held.split('\n')[2].length <= 130, 'the 400-character question is cut to one line');
+});
+
+test('buildDailyThread: account lookups skipped without a check are counted under Not a gap', () => {
+  const texts = buildDailyThread(
+    daySummary({ candidates: [], eventCounts: { total: 2, byOutcome: { shortcut_none: 2 }, bySource: { sidecar: 2 } } }),
+  ).blocks.map((b) => b.text.text);
+  assert.match(texts[0], /^\*Not a gap \(0\)\*\n.*\nPlus 2 account lookups skipped without a check\.$/s);
+});
+
+test('buildDailyThread: warnings are repeated under the hood', () => {
+  const texts = buildDailyThread(daySummary({ latestBySource: { sidecar: 111 } })).blocks.map((b) => b.text.text);
+  assert.match(texts.at(-1), /Juju 0 rows · Sidecar 111 rows · \$1\.80\n:warning: Juju sent nothing$/);
+});
+
+test('buildDailyThread: a question that smuggles in a mention throws at build time', () => {
+  const bad = [{ id: 1, status: 'logged', destination: 'none', verdict: 'NOT_A_GAP', question_paraphrase: 'Ask <@U123ABC> about exports', evidence: {} }];
+  assert.throws(() => buildDailyThread(daySummary({ candidates: bad })), ForbiddenMentionError);
 });
 
 // --- buildClaudeRequest --------------------------------------------------------

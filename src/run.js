@@ -37,7 +37,10 @@ import {
   buildGapThread,
   buildDuplicateReply,
   buildWeeklySummary,
+  buildDailyPost,
+  buildDailyThread,
 } from './slack/blocks.js';
+import { summarizeDay } from './overview.js';
 
 const LANE = 'run';
 
@@ -82,6 +85,7 @@ const LOOP_RUNS_COLUMNS = [
   'checks_failed',
   'cost_usd',
   'summary_posted',
+  'overview_posted',
   'errors',
 ];
 
@@ -97,6 +101,18 @@ const SUMMARY_HOUR_UTC = 14;
 const SUMMARY_MIN_GAP_DAYS = 6;
 // A week of logged candidates, well above the ~15 the summary actually lists.
 const SUMMARY_MAX_ROWS = 500;
+
+// Daily check window: the first run at or after 14:00 UTC (9 AM Central) on a
+// weekday, and only when the last one went out more than twenty hours ago
+// (twenty, not twenty-four, so a run that slips by an hour day to day does
+// not skip a day). Monday's covers the weekend, because each one covers
+// everything since the one before.
+const OVERVIEW_HOUR_UTC = 14;
+const OVERVIEW_MIN_GAP_HOURS = 20;
+const OVERVIEW_MAX_ROWS = 500;
+// Every status a candidate can hold: the daily check sorts all of a window's
+// candidates into groups, whatever became of them.
+const ALL_CANDIDATE_STATUSES = ['new', 'held', 'posted', 'adopted', 'rejected', 'pr_open', 'merged', 'logged'];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -161,6 +177,14 @@ export function createRun({
     if (at.getUTCDay() !== SUMMARY_WEEKDAY || at.getUTCHours() < SUMMARY_HOUR_UTC) return false;
     if (!lastSummaryAt) return true;
     return at.getTime() - new Date(lastSummaryAt).getTime() > SUMMARY_MIN_GAP_DAYS * DAY_MS;
+  }
+
+  // Pure, like `isSummaryDue`: weekdays only, never before 9 AM Central.
+  function isOverviewDue(at, lastOverviewAt) {
+    const day = at.getUTCDay();
+    if (day === 0 || day === 6 || at.getUTCHours() < OVERVIEW_HOUR_UTC) return false;
+    if (!lastOverviewAt) return true;
+    return at.getTime() - new Date(lastOverviewAt).getTime() > OVERVIEW_MIN_GAP_HOURS * 60 * 60 * 1000;
   }
 
   async function settle(fn, what) {
@@ -864,6 +888,58 @@ export function createRun({
               log(LANE, `weekly summary posted since=${since}`);
             }
           }
+        }
+      }
+
+      // --- daily check -----------------------------------------------------
+      // One short post a weekday, details in its thread: what the loop looked
+      // at, what it held and why, and whether the runs and sources showed up.
+      // Without it, a day of held gaps and no cards looks exactly like a day
+      // the loop was down. If the loop really is down this never posts, and
+      // the missing post is the signal.
+      if (!dryRun && channel) {
+        try {
+          const lastOverviewAt = await runs.lastOverviewAt();
+          if (isOverviewDue(startedAt, lastOverviewAt ?? null)) {
+            const since = lastOverviewAt ?? new Date(startedAt.getTime() - DAY_MS).toISOString();
+            const [windowRuns, windowCandidates, eventCounts, waiting, outcomes] = await Promise.all([
+              runs.listRunsSince(since),
+              candidates.listByStatus(ALL_CANDIDATE_STATUSES, { since, limit: OVERVIEW_MAX_ROWS }),
+              events.countProcessedSince(since),
+              candidates.listByStatus(['posted', 'pr_open'], { limit: OVERVIEW_MAX_ROWS }),
+              actions.listActions({ actions: ['adopted', 'merged', 'rejected'], since, limit: OVERVIEW_MAX_ROWS }),
+            ]);
+
+            const cards = buildCard(() => {
+              const summary = summarizeDay({
+                since,
+                now: startedAt,
+                // This run's own row is in the list but still open: give it
+                // the numbers it has so far, so today's cards and cost count.
+                runs: windowRuns.map((row) => (row.id === runId ? { ...row, ...ledgerPayload(stats) } : row)),
+                candidates: windowCandidates,
+                eventCounts,
+                waiting,
+                outcomes,
+                latestBySource: stats.events_by_source,
+                configuredSources: Object.keys(env.sources ?? {}).filter((source) => env.sources[source]),
+              });
+              return { post: buildDailyPost(summary), thread: buildDailyThread(summary) };
+            }, 'the daily check');
+
+            if (cards) {
+              const ts = await poster.postCard(channel, cards.post);
+              if (ts) {
+                await poster.replyInThread(channel, ts, cards.thread);
+                stats.overview_posted = true;
+                log(LANE, `daily check posted since=${since}`);
+              }
+            }
+          }
+        } catch (err) {
+          // Reporting on the loop must never be what breaks the loop.
+          stats.errors.push({ lane: 'slack', message: `the daily check: ${messageOf(err)}` });
+          logError(LANE, `daily check failed: ${messageOf(err)}`);
         }
       }
 
