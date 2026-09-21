@@ -1374,13 +1374,35 @@ test('the poll seams run unless --skip-poll is passed', async () => {
   const { run } = harness({
     pollReactions: async () => (calls.push('reactions'), {}),
     pollPrs: async () => (calls.push('prs'), {}),
+    pollReplies: async () => (calls.push('replies'), {}),
   });
 
   await run(args({ skipPoll: true }));
   assert.deepEqual(calls, []);
 
+  // Replies first: they are read ahead of the weekly summary, which lists
+  // the reasons people gave for rejecting a card.
   await run(args({ skipPoll: false }));
-  assert.deepEqual(calls, ['reactions', 'prs']);
+  assert.deepEqual(calls, ['replies', 'reactions', 'prs']);
+});
+
+test('the weekly summary lists cards rejected this week with what people wrote in the thread', async () => {
+  const seed = weeklySeed();
+  seed.candidates.push(
+    { id: 5, fingerprint: 'fp-5', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'MISSING', status: 'rejected', question_paraphrase: 'Old card, rejected this week', headline: 'Reps ask how to void a payment.', created_at: '2026-08-20T00:00:00.000Z', slack_channel: 'C1', slack_ts: '555.1' },
+    { id: 6, fingerprint: 'fp-6', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'MISSING', status: 'rejected', question_paraphrase: 'Rejected with no reason', created_at: '2026-09-18T00:00:00.000Z', slack_channel: 'C1', slack_ts: '666.1' },
+  );
+  const { run, poster, repos } = harness({ now: () => MONDAY, seed });
+  await repos.actions.recordAction({ candidateId: 5, action: 'rejected', actor: 'U7', slackTs: '555.1' });
+  await repos.actions.recordAction({ candidateId: 5, action: 'human_reply', actor: 'U7', slackTs: '555.2', note: 'Not a gap.\nThis lives in the internal runbook.' });
+  await repos.actions.recordAction({ candidateId: 6, action: 'rejected', actor: 'U7', slackTs: '666.1' });
+
+  await run(args());
+
+  const text = poster.posts[0].card.text;
+  assert.match(text, /Rejected, and why \(2\)/);
+  assert.match(text, /#5 Reps ask how to void a payment\. · "Not a gap\. This lives in the internal runbook\."/);
+  assert.match(text, /#6 Rejected with no reason · no reason given/);
 });
 
 // --- always-on teardown ----------------------------------------------------

@@ -123,7 +123,7 @@ function messageOf(err) {
  *   events: object, candidates: object, actions: object, runs: object,
  *   poster: {postCard: Function, replyInThread: Function},
  *   categoryMap: object, shortcutRules?: object[], ownerMapping: object,
- *   pollReactions?: Function, pollPrs?: Function,
+ *   pollReactions?: Function, pollPrs?: Function, pollReplies?: Function,
  *   now?: () => Date, gitSha?: string|null,
  * }} deps
  * @returns {(opts?: object) => Promise<{exitCode: number, stats: object}>}
@@ -151,6 +151,7 @@ export function createRun({
   // task only has to fill in *what* it does.
   pollReactions = async () => ({}),
   pollPrs = async () => ({}),
+  pollReplies = async () => ({}),
   now = () => new Date(),
   gitSha = null,
 }) {
@@ -808,6 +809,13 @@ export function createRun({
         }
       }
 
+      // --- thread replies --------------------------------------------------
+      // Ahead of the summary, not with the other two pollers below, so a
+      // reason written an hour before Monday's digest is in it.
+      if (!opts.skipPoll) {
+        await pollReplies({ channel, mode, candidates, actions, poster, env, now: startedAt });
+      }
+
       // --- weekly summary --------------------------------------------------
       if (!dryRun && channel) {
         const lastSummaryAt = await runs.lastSummaryAt();
@@ -823,7 +831,22 @@ export function createRun({
           // Four buckets, each a thing that gets no card of its own: seen
           // once but unconfirmed, findable-but-not-found, present-but-hidden,
           // and not ours at all.
+          // Rejected cards, with what people wrote in each one's thread
+          // (src/slack/replies.js). Read from gap_actions by when the x
+          // landed, not from the candidate's created_at: a card posted three
+          // weeks ago and rejected yesterday belongs in this week's list.
+          const rejected = [];
+          const rejections = (await actions.listActions?.({ actions: ['rejected'], since, limit: SUMMARY_MAX_ROWS })) ?? [];
+          for (const rejection of rejections) {
+            const candidate = await candidates.findById(rejection.candidate_id);
+            if (!candidate) continue;
+            const replies =
+              (await actions.listActions?.({ actions: ['human_reply'], candidateId: candidate.id, limit: 5 })) ?? [];
+            rejected.push({ ...candidate, reasons: replies.map((r) => r.note).filter(Boolean) });
+          }
+
           const summary = {
+            rejected,
             unconfirmed: logged.filter((c) => c.evidence?.hold_reason === HOLD_REASON_UNCONFIRMED),
             unfindable: logged.filter((c) => c.destination !== 'internal' && c.verdict === 'UNFINDABLE'),
             hidden: logged.filter((c) => c.destination !== 'internal' && c.verdict === 'HIDDEN'),
@@ -887,6 +910,7 @@ export async function run(opts = {}) {
   const { createSlackPoster } = await import('./slack/post.js');
   const { pollReactions } = await import('./slack/reactions.js');
   const { pollPrs } = await import('./github/prs.js');
+  const { pollReplies } = await import('./slack/replies.js');
   const { WebClient } = await import('@slack/web-api');
 
   const client = getLoopClient();
@@ -912,6 +936,7 @@ export async function run(opts = {}) {
     poster: createSlackPoster({ client: new WebClient(env.slackBotToken) }),
     pollReactions,
     pollPrs,
+    pollReplies,
     categoryMap: loadCategoryMap(),
     ownerMapping: JSON.parse(
       readFileSync(path.join(__dirname, '..', 'config', 'owner_mapping.json'), 'utf8'),

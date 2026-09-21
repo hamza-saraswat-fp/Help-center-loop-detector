@@ -58,3 +58,20 @@ test('constrains the enumerated columns', () => {
     /verdict in \('INCORRECT', 'MISSING', 'NEEDS_EDIT', 'UNFINDABLE', 'HIDDEN', 'NOT_A_GAP'\)/
   );
 });
+
+// --- 0008: replies from people -------------------------------------------------
+
+const humanReplySql = readFileSync(new URL('../migrations/0008_human_reply_action.sql', import.meta.url), 'utf8');
+
+test("0008 admits 'human_reply' without dropping any action 0001 allowed", () => {
+  const original = sql.match(/check \(action in \(([^)]+)\)\)/)[1].split(',').map((v) => v.trim());
+  const widened = humanReplySql.match(/check \(action in \(([^)]+)\)\)/)[1].split(',').map((v) => v.trim());
+  assert.deepEqual(widened, [...original, "'human_reply'"]);
+});
+
+test('0008 makes one row per Slack message, so re-reading a thread is a no-op', () => {
+  assert.match(
+    humanReplySql,
+    /create unique index if not exists gap_actions_human_reply_idx\s+on gap_actions \(candidate_id, slack_ts\)\s+where action = 'human_reply'/,
+  );
+});
