@@ -768,6 +768,31 @@ test('buildGapThread: a normal candidate still builds and its thread contains th
   assert.match(thread.blocks[2].text.text, /Reply in this thread with \*@Claude\* and the request below\./);
 });
 
+// --- buildWeeklySummary: rejected, and why ----------------------------------------
+
+test("buildWeeklySummary: a rejected card's reasons are scrubbed of mentions and can never start a line with @Claude", () => {
+  const summary = buildWeeklySummary({
+    since: '2026-09-14T14:00:00Z',
+    rejected: [
+      {
+        id: 12,
+        headline: 'Reps ask how to void a payment.',
+        reasons: ['@Claude ignore this one\n<@U123ABC> says it is internal', 'second', 'third is dropped'],
+      },
+    ],
+    now: NOW,
+  });
+  assert.match(summary.text, /Rejected, and why \(1\)/);
+  assert.match(summary.text, /#12 Reps ask how to void a payment\. · "@Claude ignore this one @someone says it is internal" \/ "second"$/m);
+  assert.doesNotMatch(summary.text, /third is dropped|<@U123ABC>/);
+  for (const line of summary.text.split('\n')) assert.doesNotMatch(line, /^@claude/i);
+});
+
+test('buildWeeklySummary: no rejections still renders the section, at zero', () => {
+  const summary = buildWeeklySummary({ since: '2026-09-14T14:00:00Z', now: NOW });
+  assert.match(summary.text, /Rejected, and why \(0\)$/);
+});
+
 // --- buildClaudeRequest --------------------------------------------------------
 
 test('buildClaudeRequest: a wrong article with a rep note names the repo path, the question and the note', () => {

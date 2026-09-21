@@ -189,11 +189,28 @@ the docs repo's own rules file, where they are versioned.
 **The detection is off** (the wrong article, a bad priority call, a
 misclassified verdict, something that is not a gap at all): the correction
 belongs in this manual and in the `gap_check` prompt files under
-`prompts/`, never only in a reply in the Slack thread. The loop does not
-read thread replies, so a detection correction that lives only in a thread
-helps exactly one candidate and is gone the next time the same gap
-resurfaces from a different source. Treat a recurring one as a signal that
-the manual or the prompt is out of date, and update it before moving on.
+`prompts/`, never only in a reply in the Slack thread. The loop records what
+people write in a card's thread and lists the reasons for rejected cards in
+the Monday summary, but it does not act on them: a detection correction
+that lives only in a thread helps exactly one candidate and is gone the
+next time the same gap resurfaces from a different source. Treat a
+recurring one as a signal that the manual or the prompt is out of date, and
+update it before moving on.
+
+## What the loop reads back from Slack
+
+Three things, every run, for cards from the last 30 days:
+
+- **Reactions** on the card: :white_check_mark: is adopted, :x: is rejected
+  (`src/slack/reactions.js`).
+- **Replies people write in the card's thread** (`src/slack/replies.js`),
+  stored as `gap_actions` rows with action `human_reply` and the text in
+  `note`. People only: the loop's own reply, Claude's replies, and system
+  messages are skipped. This is the durable copy of why a card was rejected
+  and what a writer asked Claude to change. It needs the Slack app to have
+  the `groups:history` scope (`channels:history` for a public channel);
+  without it the lane logs `missing_scope` once per run and does nothing.
+- **Merged PRs** on the docs repo that name `Gap #<n>` (`src/github/prs.js`).
 
 ## Modes and env ladders
 
@@ -319,7 +336,8 @@ elsewhere.
 Once a week, the first run after 14:00 UTC on a Monday (and only if the
 last summary went out more than six days ago, so a run that slips by an
 hour doesn't skip a week), the loop posts one digest card instead of
-individual candidate cards for four buckets that never get their own:
+individual candidate cards for four buckets that never get their own, and
+a fifth list of what was rejected:
 
 - **Seen once, not confirmed**: a gap nobody has confirmed an answer for
   yet, held rather than posted after its first sighting (see Routing
@@ -332,6 +350,10 @@ individual candidate cards for four buckets that never get their own:
   Evan, not a docs edit anyone can just paste into `#mintlify-admin`.
 - **`internal`**: candidates whose real home is an internal process doc or
   runbook, not the public help center at all.
+- **Rejected, and why**: every card that got an :x: since the last summary,
+  with up to two things people wrote in its thread, or "no reason given".
+  This is the list to read for detection mistakes: the same reason showing
+  up twice means the `gap_check` prompt or a shortcut rule needs a change.
 
 `buildWeeklySummary` in `src/slack/blocks.js` builds this card; `src/run.js`
 decides when it's due and what window it covers.

@@ -398,9 +398,26 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       // The real repo returns null on a unique violation (the partial unique
       // indexes in migrations/0001_loop_schema.sql) without inserting.
       if (scriptedToFail('recordAction')) return null;
-      const row = { id: nextId(state.actions), ...action };
+      // gap_actions_human_reply_idx (migrations/0008): one row per Slack
+      // message, so re-reading the same thread records nothing new.
+      if (
+        action.action === 'human_reply' &&
+        state.actions.some((a) => a.action === 'human_reply' && a.candidateId === action.candidateId && a.slackTs === action.slackTs)
+      ) {
+        return null;
+      }
+      const row = { id: nextId(state.actions), at: now().toISOString(), ...action };
       state.actions.push(row);
       return { ...row };
+    },
+    async listActions({ actions: wanted = [], since = null, candidateId = null, limit = 100 } = {}) {
+      // Same projection shape as the real repo: column names, oldest first.
+      return state.actions
+        .filter((a) => wanted.includes(a.action))
+        .filter((a) => (candidateId === null ? true : a.candidateId === candidateId))
+        .filter((a) => (since ? new Date(a.at) >= new Date(since) : true))
+        .slice(0, limit)
+        .map((a) => ({ id: a.id, candidate_id: a.candidateId, action: a.action, actor: a.actor ?? null, slack_ts: a.slackTs ?? null, note: a.note ?? null, at: a.at }));
     },
     async hasAction(candidateId, action) {
       return state.actions.some((a) => a.candidateId === candidateId && a.action === action);

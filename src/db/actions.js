@@ -90,7 +90,29 @@ export function createActionsRepo({ client }) {
     }
   }
 
-  return { recordAction, hasAction, getAction };
+  // The Monday summary's read: which cards were rejected this week, and what
+  // people wrote in a card's thread (`human_reply`, src/slack/replies.js).
+  // Oldest first, so a thread's notes read in the order they were written.
+  async function listActions({ actions = [], since = null, candidateId = null, limit = 100 } = {}) {
+    try {
+      let query = client
+        .from('gap_actions')
+        .select('id, candidate_id, action, actor, slack_ts, note, at')
+        .in('action', actions);
+      if (since) query = query.gte('at', since);
+      if (candidateId !== null) query = query.eq('candidate_id', candidateId);
+
+      const { data, error } = await query.order('at', { ascending: true }).limit(limit);
+
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    } catch (err) {
+      logError('db', `listActions(${actions}) failed: ${err.message}`);
+      return [];
+    }
+  }
+
+  return { recordAction, hasAction, getAction, listActions };
 }
 
 let defaultRepo = null;

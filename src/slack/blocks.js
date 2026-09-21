@@ -661,9 +661,12 @@ function formatListSection(title, items, formatter) {
  * find), HIDDEN (exists but hidden, nav changes need Evan, so these are
  * flagged rather than auto-fixed), and internal-only matches (not for the
  * help center at all). The unconfirmed list is first, since it is the
- * largest and most actionable of the four.
+ * largest and most actionable of the four. Last comes what was rejected
+ * this week and why: each rejected card with what people wrote in its
+ * thread (`reasons`, from src/slack/replies.js), which is how a recurring
+ * detection mistake gets noticed and fixed in the prompt.
  * @param {{since:string|Date, unconfirmed?:Array<object>, unfindable?:Array<object>,
- *   hidden?:Array<object>, internal?:Array<object>, now?:Date}} args
+ *   hidden?:Array<object>, internal?:Array<object>, rejected?:Array<object>, now?:Date}} args
  * @returns {{text:string, blocks:Array<object>}}
  */
 export function buildWeeklySummary({
@@ -672,6 +675,7 @@ export function buildWeeklySummary({
   unfindable = [],
   hidden = [],
   internal = [],
+  rejected = [],
   now = new Date(),
 }) {
   void now;
@@ -699,11 +703,25 @@ export function buildWeeklySummary({
     (item) => `#${item.id} ${item.question_paraphrase} · ${item.category}`,
   );
 
-  const lines = [header, '', unconfirmedSection, '', unfindableSection, '', hiddenSection, '', internalSection];
+  // People's own words from the thread: mentions scrubbed, flattened to one
+  // line (so a reply that opens with "@Claude" can never start a line here),
+  // at most two per card.
+  const rejectedSection = formatListSection('Rejected, and why', rejected, (item) => {
+    const reasons = (item.reasons ?? [])
+      .map((reason) => scrubNote(reason)?.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .slice(0, 2);
+    const why = reasons.length > 0 ? reasons.map((reason) => `"${reason}"`).join(' / ') : 'no reason given';
+    return `#${item.id} ${item.headline || item.question_paraphrase} · ${why}`;
+  });
+
+  const lines = [
+    header, '', unconfirmedSection, '', unfindableSection, '', hiddenSection, '', internalSection, '', rejectedSection,
+  ];
   const text = lines.join('\n');
   assertNoForbiddenMentions(text);
 
-  const blockTexts = [header, unconfirmedSection, unfindableSection, hiddenSection, internalSection];
+  const blockTexts = [header, unconfirmedSection, unfindableSection, hiddenSection, internalSection, rejectedSection];
   return {
     text: truncateSlackText(text, 4000),
     blocks: blockTexts.map((t) => ({ type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(t, 3000) } })),
