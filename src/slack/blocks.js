@@ -537,32 +537,36 @@ function articleTodaySection({ title, saysNow }) {
   return `*The article says today*\n${quote(todayText)}`;
 }
 
-function toFixItSection({ candidate, claudeRequest }) {
+// Returns one Slack section per entry. The request gets a section of its
+// own: Slack folds a long section behind "Show more", and when the box shared
+// a section with the sentences around it, the fold landed inside the box and
+// hid the one thing a person has to copy.
+function toFixItSections({ candidate, claudeRequest }) {
   const lowConfidence = typeof candidate.confidence === 'number' && candidate.confidence < 40;
-  const request = truncateField(claudeRequest, PASTE_REQUEST_BUDGET);
+  const box = `\`\`\`${truncateField(claudeRequest, PASTE_REQUEST_BUDGET)}\`\`\``;
 
   if (lowConfidence) {
-    return (
+    return [
       '*To fix it*\n' +
-      "This one needs a human look before anything is changed. If you know the right answer, update the article, then react :white_check_mark:. React :x: if this isn't a real gap."
-    );
+        "This one needs a human look before anything is changed. If you know the right answer, update the article, then react :white_check_mark:. React :x: if this isn't a real gap.",
+    ];
   }
 
   if (candidate.needs_answer) {
-    return (
+    return [
       '*To fix it*\n' +
-      'Nobody has confirmed the answer yet. If you know it, reply in this thread with *@Claude* and the request below, with the answer filled in. Claude proposes the wording and opens the change once you say yes.\n' +
-      `\`\`\`${request}\`\`\`\n` +
-      "React :x: if this isn't a real gap."
-    );
+        'Nobody has confirmed the answer yet. If you know it, reply in this thread with *@Claude* and the request below, with the answer filled in. Claude proposes the wording and opens the change once you say yes.',
+      box,
+      "React :x: if this isn't a real gap.",
+    ];
   }
 
-  return (
+  return [
     '*To fix it*\n' +
-    'Reply in this thread with *@Claude* and the request below. Claude reads the article, proposes the wording, and opens the change once you say yes.\n' +
-    `\`\`\`${request}\`\`\`\n` +
-    "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap."
-  );
+      'Reply in this thread with *@Claude* and the request below. Claude reads the article, proposes the wording, and opens the change once you say yes.',
+    box,
+    "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.",
+  ];
 }
 
 function howSureSection({ candidate, title, saysNow }) {
@@ -614,7 +618,7 @@ export function buildGapThread({ candidate, linked = [], now = new Date() }) {
   const sections = [
     whatHappenedSection({ candidate, reportingEvent, note }),
     articleTodaySection({ title, saysNow }),
-    toFixItSection({ candidate, claudeRequest }),
+    ...toFixItSections({ candidate, claudeRequest }),
     howSureSection({ candidate, title, saysNow }),
   ];
 

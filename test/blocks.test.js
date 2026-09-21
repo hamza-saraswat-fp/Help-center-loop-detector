@@ -469,14 +469,19 @@ test('buildGapThread: To fix it - normal variant has the exact copy and the requ
   const candidate = baseCandidate();
   const linked = [sidecarEvent()];
   const thread = buildGapThread({ candidate, linked, now: NOW });
-  const block = thread.blocks[2].text.text;
-  assert.match(
-    block,
-    /^\*To fix it\*\nReply in this thread with \*@Claude\* and the request below\. Claude reads the article, proposes the wording, and opens the change once you say yes\.\n```/,
+  assert.equal(
+    thread.blocks[2].text.text,
+    '*To fix it*\nReply in this thread with *@Claude* and the request below. Claude reads the article, proposes the wording, and opens the change once you say yes.',
   );
+  // The box is a section of its own, so Slack's "Show more" fold can never
+  // land inside it and hide the text a person has to copy.
   const request = buildClaudeRequest({ candidate, reportingEvent: linked[0], note: linked[0].truth_answer });
-  assert.ok(block.includes(`\`\`\`${request}\`\`\``));
-  assert.match(block, /Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done\. React :x: if this isn't a real gap\.$/);
+  assert.equal(thread.blocks[3].text.text, `\`\`\`${request}\`\`\``);
+  assert.equal(
+    thread.blocks[4].text.text,
+    "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.",
+  );
+  assert.equal(thread.blocks.length, 6);
 });
 
 test('buildGapThread: To fix it - low confidence variant replaces the sentence and drops the code block', () => {
@@ -495,13 +500,12 @@ test('buildGapThread: To fix it - needs_answer asks the human to fill in the ans
   for (const proposed_change of [null, 'Add this fact.']) {
     const candidate = baseCandidate({ needs_answer: true, verdict: 'MISSING', should_say: null, proposed_change, confidence: 88 });
     const thread = buildGapThread({ candidate, linked: [unconfirmed], now: NOW });
-    const block = thread.blocks[2].text.text;
-    assert.match(
-      block,
-      /^\*To fix it\*\nNobody has confirmed the answer yet\. If you know it, reply in this thread with \*@Claude\* and the request below, with the answer filled in\. Claude proposes the wording and opens the change once you say yes\.\n```/,
+    assert.equal(
+      thread.blocks[2].text.text,
+      '*To fix it*\nNobody has confirmed the answer yet. If you know it, reply in this thread with *@Claude* and the request below, with the answer filled in. Claude proposes the wording and opens the change once you say yes.',
     );
-    assert.ok(block.includes('The right answer is: <type it here>.'));
-    assert.match(block, /```\nReact :x: if this isn't a real gap\.$/);
+    assert.match(thread.blocks[3].text.text, /^```Gap #148\. .*The right answer is: <type it here>\. Propose what to add and where\.```$/);
+    assert.equal(thread.blocks[4].text.text, "React :x: if this isn't a real gap.");
   }
 });
 
@@ -515,7 +519,7 @@ test('buildGapThread: How sure is this - says_now present names the article', ()
   const candidate = baseCandidate({ confidence: 85 });
   const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
   assert.equal(
-    thread.blocks[3].text.text,
+    thread.blocks.at(-1).text.text,
     '*How sure is this?*\nFairly sure (85%). The loop read 10 articles and found that sentence in Managing Customer Tags.',
   );
 });
@@ -524,7 +528,7 @@ test('buildGapThread: How sure is this - MISSING with no says_now', () => {
   const candidate = baseCandidate({ verdict: 'MISSING', says_now: null, confidence: 75, evidence: { files_read: ['a.mdx', 'b.mdx'] } });
   const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
   assert.equal(
-    thread.blocks[3].text.text,
+    thread.blocks.at(-1).text.text,
     '*How sure is this?*\nFairly sure (75%). The loop read 2 articles; none of them cover this.',
   );
 });
@@ -532,7 +536,7 @@ test('buildGapThread: How sure is this - MISSING with no says_now', () => {
 test('buildGapThread: How sure is this - neither ending applies', () => {
   const candidate = baseCandidate({ verdict: 'NEEDS_EDIT', says_now: null, confidence: null, evidence: { files_read: [] } });
   const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  assert.equal(thread.blocks[3].text.text, '*How sure is this?*\nNot rated. The loop read 0 articles.');
+  assert.equal(thread.blocks.at(-1).text.text, '*How sure is this?*\nNot rated. The loop read 0 articles.');
 });
 
 test('buildGapThread: text fallback is "How to fix gap #<id>"', () => {
@@ -572,12 +576,13 @@ test('buildGapThread: a 12k says_now and a 12k question together do not break th
   const todaySection = thread.blocks[1].text.text;
   assert.match(todaySection, /^\*The article says today\*\n> x+…?$/, 'the heading and the quoted sentence must survive');
 
-  const toFixIt = thread.blocks[2].text.text;
-  const fenceCount = (toFixIt.match(/```/g) ?? []).length;
+  const box = thread.blocks[3].text.text;
+  const fenceCount = (box.match(/```/g) ?? []).length;
   assert.equal(fenceCount, 2, `expected exactly one balanced code fence, found ${fenceCount} backtick runs`);
+  assert.match(box, /^```Gap #148\. /);
   assert.match(
-    toFixIt,
-    /Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done\. React :x: if this isn't a real gap\.$/,
+    thread.blocks[4].text.text,
+    /^Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done\. React :x: if this isn't a real gap\.$/,
     'the closing accept/reject instruction must survive verbatim',
   );
   for (const block of thread.blocks) {
