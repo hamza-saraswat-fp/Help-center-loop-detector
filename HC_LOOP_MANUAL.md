@@ -77,13 +77,11 @@ A Tech Support rep asked Sidecar: "What percentage does card fee recovery add fo
 
 *The article says today*
 > When you enable Card Fee Recovery, each line item on an invoice will be increased by the fee rate you pass on to your customers, which is typically 3%.
-*It should say*
-> When you enable Card Fee Recovery, each line item on an invoice will be increased by the fee rate you pass on to your customers, which is typically 4%.
 
 *To fix it*
-Reply in this thread with *@Claude* and the request below. Claude opens the change for you to approve in #mintlify-admin, same as always.
+Reply in this thread with *@Claude* and the request below. Claude reads the article, proposes the wording, and opens the change once you say yes.
 ```
-In "Card Fee Recovery", replace "which is typically 3%" with "which is typically 4%".
+Gap #9. Article: using-fieldpulse/payments/start-here/card-fee-recovery.mdx. Someone asked: "What percentage does card fee recovery add for credit card payments, and for ACH?" A Tech Support rep wrote: "CFR adds 4% fee not 3%". Propose the fix.
 ```
 Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.
 
@@ -124,12 +122,33 @@ candidate's confidence score:
 | below 40 | Guessing |
 | not rated | Not rated |
 
-A candidate below 40 confidence, or one with no confirmed answer and no
-draft yet, gets a different "To fix it" section that asks a human to look
-at it before anything changes, rather than a ready-to-paste request. Cards
-never carry `<@U...>` mentions or the literal text `@Claude` outside the "To
-fix it" instructions, those instructions only ever tell a *human* what to
-type, they never trigger anything themselves.
+The loop does not write the new wording. The thread shows what the article
+says today and stops; Claude writes the change in the thread, after a human
+asks it to, using what the channel has taught it about how the help center
+writers want things said. The loop's own draft (`should_say`,
+`proposed_change`, `paste_request`) is still stored on the candidate, so it
+can be compared with what shipped, but it never appears on a card.
+
+The request in the "To fix it" box carries facts only: the gap number, the
+article's path in the docs repo, what was asked, and the confirmed answer.
+It never quotes a sentence to find and replace. The first live test showed
+why: the card fee rate was stated twice in the article and two worked
+examples were calculated from it, so a one-sentence swap would have left
+the article contradicting itself. Claude reads the whole article and finds
+every place. Everything Claude needs has to be in that box, because Claude
+is shown the thread's top post and the human's message but not this app's
+thread reply.
+
+A candidate with no confirmed answer gets a request with a blank, `The
+right answer is: <type it here>`, and a sentence asking whoever knows the
+answer to fill it in; the loop never supplies an answer nobody confirmed. A
+candidate below 40 confidence gets a "To fix it" section that asks a human
+to look at it before anything changes, with no request at all. Cards never
+carry `<@U...>` mentions or the literal text `@Claude` outside the "To fix
+it" instructions, those instructions only ever tell a *human* what to type,
+they never trigger anything themselves. An `@Claude` inside a quoted note or
+question loses its `@` before it goes in the box, so quoted text can never
+read as a second instruction.
 
 ## Routing
 
@@ -142,8 +161,10 @@ usual sense. Candidates destined for `internal` route to the appropriate
 category owner; events with no existing answer (`needs_answer`) get the
 same post and thread, labeled "needs an answer" instead of being routed
 anywhere separately. Shipping a fix means replying `@Claude` in the post's
-thread with the docs repo connected, or making the edit yourself and
-reacting :white_check_mark:.
+thread with the request from the box: Claude proposes the wording in the
+thread, opens the change after a yes, and merges only when told to ship
+it (the channel's instructions in the Claude Tag settings say so). Or make
+the edit yourself and react :white_check_mark:.
 
 A gap with a human-confirmed answer still posts immediately, exactly as
 above. A gap nobody has confirmed an answer for only posts once it has been
@@ -151,17 +172,28 @@ seen twice; the first sighting is logged with `evidence.hold_reason:
 'unconfirmed_single'` and shows up in the weekly summary's "Seen once, not
 confirmed" list instead of a card.
 
-## Fix the file, not the thread
+## Where a correction goes
 
-When a card is wrong, the wrong article, a bad priority call, a
-misclassified verdict, a should-say that isn't actually in FieldPulse's
-voice, the correction belongs in this manual and in the `gap_check` prompt
-files under `prompts/`, never only in a reply in the Slack thread. A
-correction that lives only in a thread helps exactly one candidate and is
-gone the next time the same gap resurfaces from a different source; a
-correction that lands here or in the prompt fixes every future run. Treat a
-recurring thread correction as a signal that the manual or the prompt is
-out of date, and update it before moving on.
+There are two kinds of correction, and they go to different places.
+
+**The wording is off** (not FieldPulse's voice, too long, the wrong term):
+say so to Claude in the card's thread. The channel's instructions tell
+Claude to revise, then save the general rule to the channel's memory and
+say what it saved, so the next card gets it right. Anyone in the channel
+can check with `@Claude what do you remember about this channel?` and
+correct or delete an entry. Channel memory is not a permanent record (it
+is deleted if the channel's Claude Tag scope is removed, and it has reset
+once before), so rules that have held up for a while should be copied into
+the docs repo's own rules file, where they are versioned.
+
+**The detection is off** (the wrong article, a bad priority call, a
+misclassified verdict, something that is not a gap at all): the correction
+belongs in this manual and in the `gap_check` prompt files under
+`prompts/`, never only in a reply in the Slack thread. The loop does not
+read thread replies, so a detection correction that lives only in a thread
+helps exactly one candidate and is gone the next time the same gap
+resurfaces from a different source. Treat a recurring one as a signal that
+the manual or the prompt is out of date, and update it before moving on.
 
 ## Modes and env ladders
 
