@@ -90,6 +90,16 @@ test("manual's thread sample contains the exact To fix it first sentence buildGa
   assert.ok(manual.includes(firstSentence), 'manual should contain the To fix it first sentence verbatim');
 });
 
+test("manual's thread sample carries the exact request buildGapThread puts in the box, and no draft wording", () => {
+  const thread = buildGapThread({ candidate: sampleCandidate(), linked: sampleLinked(), now: SAMPLE_NOW });
+  const request = thread.blocks[2].text.text.split('```')[1];
+
+  assert.match(request, /^Gap #9\. Article: /);
+  assert.ok(manual.includes(`\`\`\`\n${request}\n\`\`\``), 'manual should contain the boxed request verbatim');
+  assert.ok(manual.includes(thread.blocks[1].text.text), 'manual should contain the says-today section verbatim');
+  assert.doesNotMatch(manual, /\*It should say\*/);
+});
+
 test("manual's thread sample matches buildGapThread's How sure section verbatim", () => {
   const thread = buildGapThread({ candidate: sampleCandidate(), linked: sampleLinked(), now: SAMPLE_NOW });
   const howSure = thread.blocks[3].text.text;

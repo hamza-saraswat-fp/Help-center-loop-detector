@@ -446,12 +446,12 @@ function scrubNote(text) {
   return scrubbed.length > 300 ? `${scrubbed.slice(0, 299)}…` : scrubbed;
 }
 
-// A model- or human-written field can run to any length (`should_say` and
-// `proposed_change` in particular -- nothing upstream caps them the way
-// `headline` is capped at 200 chars). Truncating the *assembled* section
+// A model- or human-written field can run to any length (`says_now` and
+// the question paraphrase in particular -- nothing upstream caps them the
+// way `headline` is capped at 200 chars). Truncating the *assembled* section
 // after the fact, at the final 3000-char guard, can land mid-sentence: it
-// has cut an unclosed ``` fence out of "To fix it" and silently dropped the
-// whole "It should say" draft in earlier revisions of this file. Budgeting
+// has cut an unclosed ``` fence out of "To fix it" in an earlier revision of
+// this file. Budgeting
 // each variable field to a fixed size *before* it goes into a section
 // keeps every section's fixed copy -- headings, fences, the react-to-accept
 // sentence -- intact; the final 3000-char truncateSlackText in
@@ -519,7 +519,12 @@ function whatHappenedSection({ candidate, reportingEvent, note }) {
   return `*What happened*\n${sentence} ${lead}\n${quote(note)}`;
 }
 
-function articleTodaySection({ candidate, title, saysNow, draftRaw }) {
+// The loop shows what the article says today and stops there. It does not
+// draft the new wording: Claude Tag writes that in the thread, with the
+// channel's memory of what the help center writers have asked for before.
+// `should_say` and `proposed_change` are still stored on the candidate, they
+// are just not shown.
+function articleTodaySection({ title, saysNow }) {
   let todayText;
   if (saysNow) {
     todayText = truncateField(saysNow);
@@ -529,43 +534,32 @@ function articleTodaySection({ candidate, title, saysNow, draftRaw }) {
     todayText = 'No article covers this.';
   }
 
-  let block = `*The article says today*\n${quote(todayText)}`;
-
-  if (draftRaw !== null) {
-    const draft = truncateField(draftRaw);
-    const heading = candidate.verdict === 'MISSING' ? 'Add this' : 'It should say';
-    const finalHeading = candidate.needs_answer
-      ? `Draft, unconfirmed: ${heading.charAt(0).toLowerCase()}${heading.slice(1)}`
-      : heading;
-    block += `\n*${finalHeading}*\n${quote(draft)}`;
-  }
-
-  return block;
+  return `*The article says today*\n${quote(todayText)}`;
 }
 
-function toFixItSection({ candidate, pasteRequest }) {
-  const hasDraft = Boolean(candidate.should_say || candidate.proposed_change);
+function toFixItSection({ candidate, claudeRequest }) {
   const lowConfidence = typeof candidate.confidence === 'number' && candidate.confidence < 40;
-  const request = truncateField(pasteRequest, PASTE_REQUEST_BUDGET);
+  const request = truncateField(claudeRequest, PASTE_REQUEST_BUDGET);
 
-  if (lowConfidence || (candidate.needs_answer && !hasDraft)) {
+  if (lowConfidence) {
     return (
       '*To fix it*\n' +
       "This one needs a human look before anything is changed. If you know the right answer, update the article, then react :white_check_mark:. React :x: if this isn't a real gap."
     );
   }
 
-  if (candidate.needs_answer && hasDraft) {
+  if (candidate.needs_answer) {
     return (
       '*To fix it*\n' +
-      'Nobody has confirmed this yet. If the draft below is right, reply in this thread with *@Claude* and the request. If you are not sure, leave it and react :x: or ask the product owner.\n' +
-      `\`\`\`${request}\`\`\``
+      'Nobody has confirmed the answer yet. If you know it, reply in this thread with *@Claude* and the request below, with the answer filled in. Claude proposes the wording and opens the change once you say yes.\n' +
+      `\`\`\`${request}\`\`\`\n` +
+      "React :x: if this isn't a real gap."
     );
   }
 
   return (
     '*To fix it*\n' +
-    'Reply in this thread with *@Claude* and the request below. Claude opens the change for you to approve in #mintlify-admin, same as always.\n' +
+    'Reply in this thread with *@Claude* and the request below. Claude reads the article, proposes the wording, and opens the change once you say yes.\n' +
     `\`\`\`${request}\`\`\`\n` +
     "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap."
   );
@@ -586,11 +580,11 @@ function howSureSection({ candidate, title, saysNow }) {
 
 /**
  * The thread reply: the story of what happened, what the article says
- * today vs. what it should say, how to fix it (three variants depending on
+ * today, how to hand the gap to Claude (three variants depending on
  * confidence and whether an answer is confirmed yet), and how sure the loop
  * is. `{ text, blocks }` ready for `replyInThread`. Every model- or
  * human-written field (the question paraphrase, the rep/owner note,
- * `says_now`, the draft, the paste request, the article title) is checked
+ * `says_now`, the truth summary, the request, the article title) is checked
  * with `assertNoForbiddenMentions` on its own, before any of the builder's
  * constant sentences are woven around it; the fully assembled text is
  * checked again as a backstop.
@@ -605,22 +599,22 @@ export function buildGapThread({ candidate, linked = [], now = new Date() }) {
   const hasHumanNote = reportingEvent?.truth_kind === 'human' && Boolean(reportingEvent?.truth_answer);
   const note = hasHumanNote ? scrubNote(reportingEvent.truth_answer) : null;
   const saysNow = candidate.says_now ?? null;
-  const draftRaw = candidate.should_say ?? candidate.proposed_change ?? null;
-  const pasteRequest = buildPasteRequest(candidate);
 
   assertFieldsClean({
     question_paraphrase: candidate.question_paraphrase,
     note,
     says_now: saysNow,
-    draft: draftRaw,
-    paste_request: pasteRequest,
+    truth_summary: candidate.truth_summary,
     article_title: title,
   });
 
+  const claudeRequest = buildClaudeRequest({ candidate, reportingEvent, note });
+  assertFieldsClean({ claude_request: claudeRequest });
+
   const sections = [
     whatHappenedSection({ candidate, reportingEvent, note }),
-    articleTodaySection({ candidate, title, saysNow, draftRaw }),
-    toFixItSection({ candidate, pasteRequest }),
+    articleTodaySection({ title, saysNow }),
+    toFixItSection({ candidate, claudeRequest }),
     howSureSection({ candidate, title, saysNow }),
   ];
 
@@ -712,11 +706,87 @@ export function buildWeeklySummary({
   };
 }
 
+// The request sits inside a ``` fence on one line, so newlines collapse to
+// spaces and a run of backticks (which would close the fence early) becomes
+// plain quotes. Unlike the rest of the thread, this text is pasted to Claude
+// by a human, so a rep's note or a question is something Claude reads: an
+// "@Claude" inside it loses its "@" so quoted content can never read as a
+// second instruction addressed to Claude.
+function oneLine(text) {
+  return String(text ?? '')
+    .replace(/`{3,}/g, "'''")
+    .replace(/@claude\b/gi, 'Claude')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// `"text".` -- but no second full stop after a quote that already ends in
+// one, so a question reads `asked: "...for ACH?"` and not `"...for ACH?".`
+function quotedSentence(text) {
+  const flat = oneLine(text);
+  return `"${flat}"${/[.?!…]$/.test(flat) ? '' : '.'}`;
+}
+
+function answeredByPhrase(reportingEvent) {
+  if (reportingEvent?.source === 'sidecar') {
+    const team = SIDECAR_TEAM_LABELS[reportingEvent.detail?.team] ?? reportingEvent.detail?.team ?? null;
+    return `A ${team ? `${team} ` : ''}rep wrote`;
+  }
+  if (reportingEvent?.source === 'juju') return 'A product owner answered';
+  return 'Someone answered';
+}
+
 /**
- * The paste-ready request that goes under a candidate card's "To ship:"
- * line, or is posted standalone to #mintlify-admin. `candidate.paste_request`
- * wins when the model already wrote one; otherwise it's derived from the
- * verdict and whatever fields are populated.
+ * The request a human pastes after *@Claude* in a gap's thread. Facts only:
+ * the gap number, the article's repo path, what was asked, and the confirmed
+ * answer. It never carries suggested wording and never quotes a sentence to
+ * find-and-replace -- Claude reads the article itself, so it catches every
+ * place a fact appears (a rate stated twice, worked examples calculated from
+ * it), which a one-sentence swap misses. Claude Tag is shown the thread's
+ * top post but not this bot's reply, so everything it needs has to be in the
+ * text the human pastes.
+ *
+ * With no confirmed answer the request carries a blank for the human to
+ * fill in; the loop never supplies an answer nobody confirmed. Always one
+ * line, never starting with "@Claude".
+ * @param {{candidate:object, reportingEvent?:object|null, note?:string|null}} args
+ * @returns {string}
+ */
+export function buildClaudeRequest({ candidate, reportingEvent = null, note = null }) {
+  const path = candidate.target_article_path || null;
+  const isMissing = candidate.verdict === 'MISSING';
+
+  let articleLine;
+  if (!path) articleLine = 'No article covers this yet.';
+  else if (isMissing) articleLine = `Closest article: ${path}.`;
+  else articleLine = `Article: ${path}.`;
+
+  let answerLine;
+  if (note) {
+    answerLine = `${answeredByPhrase(reportingEvent)}: ${quotedSentence(note)}`;
+  } else if (candidate.needs_answer || !candidate.truth_summary) {
+    answerLine = 'The right answer is: <type it here>.';
+  } else {
+    answerLine = `The confirmed answer: ${quotedSentence(candidate.truth_summary)}`;
+  }
+
+  const ask = isMissing ? 'Propose what to add and where.' : 'Propose the fix.';
+
+  return [
+    `Gap #${candidate.id}.`,
+    articleLine,
+    `Someone asked: ${quotedSentence(candidate.question_paraphrase)}`,
+    answerLine,
+    ask,
+  ].join(' ');
+}
+
+/**
+ * The one-sentence change request in a pre-opened preview PR's body
+ * (src/github/preview.js). Not used on Slack cards: a gap's thread carries
+ * `buildClaudeRequest` instead. `candidate.paste_request` wins when the
+ * model already wrote one; otherwise it's derived from the verdict and
+ * whatever fields are populated.
  * @param {object} candidate
  * @returns {string}
  */
