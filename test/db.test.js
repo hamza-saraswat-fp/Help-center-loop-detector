@@ -767,3 +767,59 @@ test('findById: returns the candidate row, or null when it is missing', async ()
   assert.equal(await repo.findById(8), null);
   assert.equal(calls[0].single, 'maybeSingle');
 });
+
+// ---------------------------------------------------------------------------
+// countProcessedSince — the daily check's "questions looked at"
+// ---------------------------------------------------------------------------
+
+test('countProcessedSince tallies by outcome and by source, keyed on processed_at', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': {
+      data: [
+        { source: 'sidecar', outcome: 'candidate' },
+        { source: 'sidecar', outcome: 'duplicate' },
+        { source: 'juju', outcome: 'candidate' },
+      ],
+      error: null,
+    },
+  });
+  const events = createEventsRepo({ client, now });
+
+  assert.deepEqual(await events.countProcessedSince('2026-09-21T14:00:00.000Z'), {
+    total: 3,
+    byOutcome: { candidate: 2, duplicate: 1 },
+    bySource: { sidecar: 2, juju: 1 },
+  });
+  assert.deepEqual(calls[0].filters, [{ method: 'gte', args: ['processed_at', '2026-09-21T14:00:00.000Z'] }]);
+});
+
+test('countProcessedSince returns zeroes instead of throwing when the select fails', async () => {
+  const { client } = fakeSupabase({ 'gap_events.select': { data: null, error: { message: 'boom' } } });
+  const events = createEventsRepo({ client, now });
+
+  assert.deepEqual(await events.countProcessedSince('2026-09-21T14:00:00.000Z'), { total: 0, byOutcome: {}, bySource: {} });
+});
+
+// ---------------------------------------------------------------------------
+// listActions — the Monday summary's and the daily check's read
+// ---------------------------------------------------------------------------
+
+test('listActions filters by action, since and candidate, oldest first', async () => {
+  const rows = [{ id: 1, candidate_id: 5, action: 'rejected', note: null }];
+  const { client, calls } = fakeSupabase({ 'gap_actions.select': { data: rows, error: null } });
+  const actions = createActionsRepo({ client });
+
+  assert.deepEqual(await actions.listActions({ actions: ['rejected'], since: '2026-09-14T14:00:00.000Z', candidateId: 5, limit: 7 }), rows);
+  assert.deepEqual(calls[0].filters, [
+    { method: 'in', args: ['action', ['rejected']] },
+    { method: 'gte', args: ['at', '2026-09-14T14:00:00.000Z'] },
+    { method: 'eq', args: ['candidate_id', 5] },
+  ]);
+  assert.deepEqual(calls[0].order, ['at', { ascending: true }]);
+  assert.equal(calls[0].limit, 7);
+});
+
+test('listActions returns [] instead of throwing when the select fails', async () => {
+  const { client } = fakeSupabase({ 'gap_actions.select': { data: null, error: { message: 'boom' } } });
+  assert.deepEqual(await createActionsRepo({ client }).listActions({ actions: ['rejected'] }), []);
+});

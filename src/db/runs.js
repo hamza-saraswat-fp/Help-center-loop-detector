@@ -124,7 +124,48 @@ export function createRunsRepo({ client }) {
     }
   }
 
-  return { startRun, finishRun, consecutiveSourceFailures, lastSummaryAt };
+  // When a daily check was last posted: same shape and same reasoning as
+  // `lastSummaryAt`, on the `overview_posted` marker (migrations/0009).
+  async function lastOverviewAt() {
+    try {
+      const { data, error } = await client
+        .from('loop_runs')
+        .select('started_at')
+        .eq('overview_posted', true)
+        .order('started_at', { ascending: false })
+        .limit(1);
+
+      if (error) throw new Error(error.message);
+      const row = Array.isArray(data) ? data[0] : data;
+      return row?.started_at ?? null;
+    } catch (err) {
+      logError('runs', `could not read the last daily check run: ${err.message}`);
+      return null;
+    }
+  }
+
+  // Every run that started after `since`, oldest first: the daily check's
+  // "is it running" evidence. `gt`, not `gte`, because `since` is the start
+  // of the run that posted the previous daily check, and that run belongs to
+  // the previous window. A long weekend is ~100 rows; 500 is headroom.
+  async function listRunsSince(since, { limit = 500 } = {}) {
+    try {
+      const { data, error } = await client
+        .from('loop_runs')
+        .select('id, started_at, finished_at, events_by_source, errors, cost_usd, cards_posted, checks_failed')
+        .gt('started_at', since)
+        .order('started_at', { ascending: true })
+        .limit(limit);
+
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    } catch (err) {
+      logError('runs', `could not list runs since ${since}: ${err.message}`);
+      return [];
+    }
+  }
+
+  return { startRun, finishRun, consecutiveSourceFailures, lastSummaryAt, lastOverviewAt, listRunsSince };
 }
 
 let defaultRepo = null;
@@ -150,4 +191,12 @@ export function consecutiveSourceFailures(source, opts) {
 
 export function lastSummaryAt() {
   return repo().lastSummaryAt();
+}
+
+export function lastOverviewAt() {
+  return repo().lastOverviewAt();
+}
+
+export function listRunsSince(since, opts) {
+  return repo().listRunsSince(since, opts);
 }

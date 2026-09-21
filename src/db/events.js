@@ -196,7 +196,33 @@ export function createEventsRepo({ client, now = () => new Date() }) {
     }
   }
 
-  return { sourceWatermark, upsertEvents, listUnprocessed, markProcessed, markHeld, bumpCheckAttempts };
+  // How many events the loop finished with since `since`, by outcome and by
+  // source: the daily check's "questions looked at". Keyed on `processed_at`
+  // (when the loop dealt with it), not `occurred_at` (when it was asked), so
+  // the count lines up with the candidates created in the same window.
+  async function countProcessedSince(since, { limit = 5000 } = {}) {
+    const counts = { total: 0, byOutcome: {}, bySource: {} };
+    try {
+      const { data, error } = await client
+        .from('gap_events')
+        .select('source, outcome')
+        .gte('processed_at', since)
+        .limit(limit);
+
+      if (error) throw new Error(error.message);
+      for (const row of data ?? []) {
+        counts.total += 1;
+        counts.byOutcome[row.outcome] = (counts.byOutcome[row.outcome] ?? 0) + 1;
+        counts.bySource[row.source] = (counts.bySource[row.source] ?? 0) + 1;
+      }
+      return counts;
+    } catch (err) {
+      logError('db', `countProcessedSince(${since}) failed: ${err.message}`);
+      return counts;
+    }
+  }
+
+  return { sourceWatermark, upsertEvents, listUnprocessed, markProcessed, markHeld, bumpCheckAttempts, countProcessedSince };
 }
 
 let defaultRepo = null;

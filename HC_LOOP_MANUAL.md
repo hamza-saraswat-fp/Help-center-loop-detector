@@ -358,6 +358,91 @@ a fifth list of what was rejected:
 `buildWeeklySummary` in `src/slack/blocks.js` builds this card; `src/run.js`
 decides when it's due and what window it covers.
 
+## Daily check
+
+Every weekday, on the first run at or after 14:00 UTC (9 AM Central), the
+loop posts one short "Daily check" in the gaps channel, with the details as
+a reply in its thread. It covers everything since the previous daily check,
+so Monday's covers the weekend. It never posts in `dry_run`.
+
+It exists because cards alone cannot tell you the loop is working. Most days
+the posting rule (see Routing) holds every new gap, since a gap only a tool
+flagged waits for a second sighting. A day like that, twenty questions
+checked and eleven real gaps held, looks from Slack exactly like a day the
+loop was down. The daily check shows both halves: what the loop looked at
+and where each question went, and whether the hourly runs and both sources
+showed up.
+
+The post:
+
+```
+:bar_chart: *Daily check* · Mon, Sep 21
+The loop looked at *8 questions* from Sidecar and Juju since Friday.
+:white_check_mark: *0* cards posted    :hourglass_flowing_sand: *2* real gaps held    :no_entry_sign: *3* not for the help center    :repeat: *3* asked again
+_Running normally: 72 of 72 hourly checks, no errors · 1 card waiting · details in the thread_ :arrow_down:
+```
+
+Its thread reply:
+
+```
+*Held: real gaps, seen once, nobody confirmed (2)*
+These become cards the moment someone asks again or confirms the answer. They are also in Monday's summary.
+• #183 The article does not say whether timesheets survive a user being deactivated. · Employee Timesheets
+• #186 Reps ask whether the invoice title is included in the export. The article does not say. · Exporting Estimates Invoices
+
+*Not a gap (1)*
+The help center already answers these, or the question is about one account's own data.
+• #192 Can the daily or weekly work log report include job notes
+
+*Already covered, but the tools could not find it (1)*
+A search problem, not a writing problem.
+• #202 Can you make a tech support request · Reach Support
+
+*Internal, not for the help center (1)*
+These belong in a runbook or a process doc.
+• #199 How to fix invoices affected by rounding
+
+*Asked again (3)*
+Repeats of questions the loop already knows about.
+
+*Cards*
+1 waiting (oldest: Gap #9, 5 days) · 0 fixed · 0 rejected since Friday
+
+*Under the hood*
+72 of 72 hourly checks ran · Juju 65 rows · Sidecar 111 rows · $1.80
+```
+
+Like the card sample above, this is the builders' real output
+(`buildDailyPost` and `buildDailyThread` in `src/slack/blocks.js`, fed by
+`summarizeDay` in `src/overview.js`), and `test/docs.test.js` checks it word
+for word.
+
+Reading it:
+
+- **The counts.** "Cards posted" is what reached the channel. "Real gaps
+  held" are help center gaps waiting for a second sighting or a confirmed
+  answer. "Not for the help center" is everything else: not a gap, already
+  covered, internal, and account lookups skipped without a check. "Asked
+  again" are repeats of a question the loop already has.
+- **Each group in the thread gives its reason once, for the group.** The loop
+  stores which group a question landed in, not a sentence of reasoning per
+  question. A group lists at most ten questions and counts the rest. Empty
+  groups are left out, so a quiet day is a few lines.
+- **The last line of the post is the health line.** "Running normally" means
+  the hourly runs showed up (one missing is tolerated as timing), every
+  configured source delivered rows, no run recorded an error, and no check
+  failed. Otherwise it becomes a warning naming what is wrong, for example
+  "Juju sent nothing" (a source always delivers rows when healthy, because
+  each run re-reads a 14-day window), and the same warnings repeat under
+  "Under the hood".
+- **If the loop is down, there is no daily check.** It cannot report its own
+  absence. No post by mid-morning on a weekday means go and look at
+  `loop_runs` and at Railway.
+
+The run that posts it is marked `loop_runs.overview_posted` (migration
+`0009`), which is how the next run knows one already went out and where the
+next window starts.
+
 ## Status lifecycle
 
 A candidate's `status` column moves through a fixed set of states, each one

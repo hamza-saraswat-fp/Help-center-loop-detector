@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 process.env.HC_LOOP_SKIP_ENV_VALIDATION = 'true';
 
-import { buildGapPost, buildGapThread } from '../src/slack/blocks.js';
+import { buildGapPost, buildGapThread, buildDailyPost, buildDailyThread } from '../src/slack/blocks.js';
+import { summarizeDay } from '../src/overview.js';
+import { sampleDayInput } from './fixtures/daily-check-sample.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, '..');
@@ -104,4 +106,16 @@ test("manual's thread sample matches buildGapThread's How sure section verbatim"
   const thread = buildGapThread({ candidate: sampleCandidate(), linked: sampleLinked(), now: SAMPLE_NOW });
   const howSure = thread.blocks.at(-1).text.text;
   assert.ok(manual.includes(howSure), 'manual should contain the How sure is this section verbatim');
+});
+
+test("manual's daily check sample matches buildDailyPost and buildDailyThread word for word", () => {
+  const summary = summarizeDay(sampleDayInput());
+  const post = buildDailyPost(summary);
+  const thread = buildDailyThread(summary);
+
+  const postText = `${post.blocks[0].text.text}\n${post.blocks[1].elements[0].text}`;
+  assert.ok(manual.includes(`\`\`\`\n${postText}\n\`\`\``), 'manual should contain the daily check post verbatim');
+
+  const threadText = thread.blocks.map((b) => b.text.text).join('\n\n');
+  assert.ok(manual.includes(`\`\`\`\n${threadText}\n\`\`\``), 'manual should contain the daily check thread verbatim');
 });

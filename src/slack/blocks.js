@@ -728,6 +728,165 @@ export function buildWeeklySummary({
   };
 }
 
+// --- daily check ---------------------------------------------------------------
+//
+// One short post each weekday morning, details in its thread (the summary
+// object comes from src/overview.js's `summarizeDay`). It exists so that
+// "working, and nothing qualified for a card" never looks the same as "down".
+// Written for the same non-technical reader as the cards: no verdict enums,
+// no table names, and the reason for each group in one plain sentence.
+
+const CENTRAL_TZ = 'America/Chicago';
+const DAILY_LIST_MAX = 10;
+const DAILY_ITEM_MAX_CHARS = 120;
+
+function centralDayLabel(date) {
+  return new Intl.DateTimeFormat('en-US', { timeZone: CENTRAL_TZ, weekday: 'short', month: 'short', day: 'numeric' }).format(date);
+}
+
+// "since yesterday" for a normal day, "since Friday" when the window spans a
+// weekend or a missed day.
+function sinceLabel(since, now) {
+  const hours = (now.getTime() - since.getTime()) / (60 * 60 * 1000);
+  if (hours <= 30) return 'since yesterday';
+  return `since ${new Intl.DateTimeFormat('en-US', { timeZone: CENTRAL_TZ, weekday: 'long' }).format(since)}`;
+}
+
+function plural(n, one, many = `${one}s`) {
+  return n === 1 ? one : many;
+}
+
+function joinNames(names) {
+  if (names.length <= 1) return names[0] ?? 'Sidecar and Juju';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * The daily check's channel post: what the loop looked at, where those
+ * questions went, and one line on whether it is healthy. A warning replaces
+ * the "running normally" line when it is not.
+ * @param {object} summary from `summarizeDay` (src/overview.js)
+ * @returns {{text:string, blocks:Array<object>}}
+ */
+export function buildDailyPost(summary) {
+  const { questions, sources, cardsPosted, groups, repeats, notForHelpCenter, cards, health, since, now } = summary;
+  const when = sinceLabel(since, now);
+  const held = groups.held.length;
+
+  const header = `:bar_chart: *Daily check* · ${centralDayLabel(now)}`;
+  const looked =
+    questions === 0
+      ? `No new questions came in from Sidecar or Juju ${when}.`
+      : `The loop looked at *${questions} ${plural(questions, 'question')}* from ${joinNames(sources)} ${when}.`;
+
+  const counts = [
+    `:white_check_mark: *${cardsPosted}* ${plural(cardsPosted, 'card')} posted`,
+    `:hourglass_flowing_sand: *${held}* real ${plural(held, 'gap')} held`,
+    `:no_entry_sign: *${notForHelpCenter}* not for the help center`,
+  ];
+  if (repeats > 0) counts.push(`:repeat: *${repeats}* asked again`);
+
+  const body = questions === 0 && cardsPosted === 0 ? [header, looked] : [header, looked, counts.join('    ')];
+
+  const waiting = `${cards.waiting} ${plural(cards.waiting, 'card')} waiting`;
+  const status = health.ok
+    ? `_Running normally: ${health.ranRuns} of ${health.expectedRuns} hourly checks, no errors · ${waiting} · details in the thread_ :arrow_down:`
+    : `:warning: *${health.warnings.join(' · ')}* · ${waiting} · details in the thread :arrow_down:`;
+
+  assertNoForbiddenMentions([...body, status].join('\n'));
+
+  return {
+    text: truncateSlackText(`Daily check: ${questions} ${plural(questions, 'question')} looked at, ${cardsPosted} ${plural(cardsPosted, 'card')} posted, ${held} held`, 4000),
+    blocks: [
+      { type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(body.join('\n'), 3000) } },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: truncateSlackText(status, 3000) }] },
+    ],
+  };
+}
+
+function dailyItem(item, { withArticle = true } = {}) {
+  const raw = String(item.headline || item.question_paraphrase || '').replace(/\s+/g, ' ').trim();
+  const text = raw.length > DAILY_ITEM_MAX_CHARS ? `${raw.slice(0, DAILY_ITEM_MAX_CHARS - 1)}…` : raw;
+  const title = withArticle ? articleTitle(item.target_article_path) : null;
+  assertFieldsClean({ item: text, article_title: title });
+  return `• #${item.id} ${text}${title ? ` · ${title}` : ''}`;
+}
+
+function dailyGroup(title, reason, items, extraLine = null) {
+  const lines = [`*${title} (${items.length})*`, reason, ...items.slice(0, DAILY_LIST_MAX).map((item) => dailyItem(item))];
+  if (items.length > DAILY_LIST_MAX) lines.push(`…and ${items.length - DAILY_LIST_MAX} more`);
+  if (extraLine) lines.push(extraLine);
+  return lines.join('\n');
+}
+
+/**
+ * The daily check's thread: every question that did not become a card,
+ * grouped, with the reason for each group in one sentence; then what is
+ * happening to the cards that are out; then the run numbers. Empty groups
+ * are left out, so a quiet day is a few lines.
+ * @param {object} summary from `summarizeDay` (src/overview.js)
+ * @returns {{text:string, blocks:Array<object>}}
+ */
+export function buildDailyThread(summary) {
+  const { groups, repeats, shortcuts, cards, health, since, now } = summary;
+  const when = sinceLabel(since, now);
+  const sections = [];
+
+  if (groups.held.length > 0) {
+    sections.push(
+      dailyGroup(
+        'Held: real gaps, seen once, nobody confirmed',
+        "These become cards the moment someone asks again or confirms the answer. They are also in Monday's summary.",
+        groups.held,
+      ),
+    );
+  }
+  if (groups.notAGap.length > 0 || shortcuts > 0) {
+    sections.push(
+      dailyGroup(
+        'Not a gap',
+        "The help center already answers these, or the question is about one account's own data.",
+        groups.notAGap,
+        shortcuts > 0 ? `Plus ${shortcuts} account ${plural(shortcuts, 'lookup')} skipped without a check.` : null,
+      ),
+    );
+  }
+  if (groups.unfindable.length > 0) {
+    sections.push(
+      dailyGroup(
+        'Already covered, but the tools could not find it',
+        'A search problem, not a writing problem.',
+        groups.unfindable,
+      ),
+    );
+  }
+  if (groups.internal.length > 0) {
+    sections.push(
+      dailyGroup('Internal, not for the help center', 'These belong in a runbook or a process doc.', groups.internal),
+    );
+  }
+  if (repeats > 0) {
+    sections.push(`*Asked again (${repeats})*\nRepeats of questions the loop already knows about.`);
+  }
+  if (sections.length === 0) sections.push(`Nothing new came in ${when}.`);
+
+  const oldest = cards.oldestWaiting
+    ? ` (oldest: Gap #${cards.oldestWaiting.id}, ${cards.oldestWaiting.days} ${plural(cards.oldestWaiting.days, 'day')})`
+    : '';
+  sections.push(`*Cards*\n${cards.waiting} waiting${oldest} · ${cards.fixed} fixed · ${cards.rejected} rejected ${when}`);
+
+  const rows = health.rowsBySource.map((source) => `${source.name} ${source.rows} ${plural(source.rows, 'row')}`);
+  const hood = [`${health.ranRuns} of ${health.expectedRuns} hourly checks ran`, ...rows, `$${health.costUsd.toFixed(2)}`].join(' · ');
+  sections.push(['*Under the hood*', hood, ...health.warnings.map((w) => `:warning: ${w}`)].join('\n'));
+
+  assertNoForbiddenMentions(sections.join('\n\n'));
+
+  return {
+    text: truncateSlackText('Daily check details', 4000),
+    blocks: sections.map((t) => ({ type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(t, 3000) } })),
+  };
+}
+
 // The request sits inside a ``` fence on one line, so newlines collapse to
 // spaces and a run of backticks (which would close the fence early) becomes
 // plain quotes. Unlike the rest of the thread, this text is pasted to Claude
