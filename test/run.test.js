@@ -1336,6 +1336,23 @@ test('the weekly summary posts on a Monday afternoon when none went out this wee
   assert.equal(repos.state.runs[0].summary_posted, true);
 });
 
+test('the weekly summary leads with help center edits when GitHub can be read, and says so when it cannot', async () => {
+  const withPrs = harness({
+    now: () => MONDAY,
+    seed: weeklySeed(),
+    fetchMerges: async () => [
+      { merged_at: '2026-09-18T10:00:00.000Z', title: 'Gap #9 card fee', body: '' },
+      { merged_at: '2026-09-19T10:00:00.000Z', title: 'SEO', body: '' },
+    ],
+  });
+  await withPrs.run(args());
+  assert.match(weeklyPosts(withPrs.poster)[0].card.text, /Help center edits this week: \*1\* from loop cards, 2 in total/);
+
+  const without = harness({ now: () => MONDAY, seed: weeklySeed(), fetchMerges: async () => null });
+  await without.run(args());
+  assert.match(weeklyPosts(without.poster)[0].card.text, /Help center edits this week: not available/);
+});
+
 test('the weekly summary does not post twice in one week, nor off-Monday', async () => {
   const seed = weeklySeed();
   const recent = harness({

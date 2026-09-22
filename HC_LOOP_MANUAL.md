@@ -424,6 +424,27 @@ The run that posts it is marked `loop_runs.overview_posted` (migration
 `0009`), which is how the next run knows one already went out and where the
 next window starts.
 
+## What the loop is measured by
+
+Help center edits, not gaps surfaced. A gap count is easy to inflate; a
+merged change to the help center is not. So the Monday summary opens with
+the week's edits, split into those that came from a loop card (the PR names
+`Gap #<n>`) and all merges on the docs repo, and `npm run metrics` prints the
+same numbers as one row for the team scorecard:
+
+```
+npm run metrics                     # last full week
+npm run metrics -- --week=2026-09-15
+npm run metrics -- --weeks=4        # one line per week
+```
+
+Columns: week, edits from cards, edits total, cards posted, fixed, rejected,
+waiting, gaps held, questions checked, cost. Both edits columns read `n/a`,
+and the Monday line says "not available", until the loop's GitHub token has
+"Pull requests: read" on the docs repo; today it has metadata only, so the
+PR poller and this read both get HTTP 403. `src/metrics.js` does the
+arithmetic, `src/github/merges.js` the one GitHub read.
+
 ## Status lifecycle
 
 A candidate's `status` column moves through a fixed set of states, each one

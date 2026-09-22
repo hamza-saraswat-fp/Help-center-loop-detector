@@ -41,6 +41,7 @@ import {
   buildDailyThread,
 } from './slack/blocks.js';
 import { summarizeDay } from './overview.js';
+import { fetchMergedPrs, countMerges } from './github/merges.js';
 
 const LANE = 'run';
 
@@ -168,6 +169,7 @@ export function createRun({
   pollReactions = async () => ({}),
   pollPrs = async () => ({}),
   pollReplies = async () => ({}),
+  fetchMerges = fetchMergedPrs,
   now = () => new Date(),
   gitSha = null,
 }) {
@@ -869,7 +871,13 @@ export function createRun({
             rejected.push({ ...candidate, reasons: replies.map((r) => r.note).filter(Boolean) });
           }
 
+          // Help center edits this week: the loop's success metric. Null when
+          // GitHub refuses (token without pull request read); the card says so.
+          const prs = await fetchMerges({ env });
+          const edits = prs ? countMerges(prs, { since }) : null;
+
           const summary = {
+            edits,
             rejected,
             unconfirmed: logged.filter((c) => c.evidence?.hold_reason === HOLD_REASON_UNCONFIRMED),
             unfindable: logged.filter((c) => c.destination !== 'internal' && c.verdict === 'UNFINDABLE'),

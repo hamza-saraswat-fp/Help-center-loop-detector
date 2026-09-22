@@ -617,10 +617,19 @@ export function buildWeeklySummary({
   hidden = [],
   internal = [],
   rejected = [],
+  edits = null,
   now = new Date(),
 }) {
   void now;
-  const header = `Weekly summary since ${formatShortDate(since)}`;
+  // The number the loop is measured by, first: help center edits this week,
+  // from cards and in total. `edits` is null when GitHub could not be read
+  // (the token lacks pull request access), and the line says so rather
+  // than showing a zero that is not true.
+  const editsLine =
+    edits === null
+      ? 'Help center edits this week: not available (GitHub token cannot read pull requests)'
+      : `Help center edits this week: *${edits.fromCards}* from loop cards, ${edits.total} in total`;
+  const header = `Weekly summary since ${formatShortDate(since)}\n${editsLine}`;
 
   const unconfirmedSection = formatListSection(
     'Seen once, not confirmed',
