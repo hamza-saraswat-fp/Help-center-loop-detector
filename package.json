@@ -11,7 +11,8 @@
     "start": "node src/index.js",
     "test": "node --test test/*.test.js",
     "calibrate": "node scripts/calibrate.js",
-    "migrate": "bash scripts/apply-migrations.sh"
+    "migrate": "bash scripts/apply-migrations.sh",
+    "metrics": "node scripts/weekly-metrics.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

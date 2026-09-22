@@ -493,7 +493,7 @@ test('buildWeeklySummary: the unconfirmed list is first, uses headline or paraph
   ];
   const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unconfirmed, now: NOW });
 
-  assert.match(summary.text, /^Weekly summary since Sep 8\n\nSeen once, not confirmed \(2\)/);
+  assert.match(summary.text, /^Weekly summary since Sep 8\nHelp center edits this week: not available \(GitHub token cannot read pull requests\)\n\nSeen once, not confirmed \(2\)/);
   assert.match(summary.text, /#20 Wrong tag behavior · Tag Behavior/);
   assert.match(summary.text, /#21 Can I export a report\? · no article/);
   // First in order, ahead of the other three lists.
@@ -609,6 +609,14 @@ test('buildGapThread: a truth_summary with a line starting @Claude throws', () =
 test('buildGapThread: a normal candidate still builds and its thread contains the approved sentence', () => {
   const thread = buildGapThread({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW });
   assert.match(thread.blocks[1].text.text, /Reply here with \*@Claude\* and say yes\./);
+});
+
+// --- buildWeeklySummary: help center edits, the success metric -----------------------
+
+test('buildWeeklySummary: leads with help center edits when GitHub could be read', () => {
+  const summary = buildWeeklySummary({ since: '2026-09-14T14:00:00Z', edits: { total: 7, fromCards: 2 }, now: NOW });
+  assert.match(summary.text, /^Weekly summary since Sep 14\nHelp center edits this week: \*2\* from loop cards, 7 in total\n/);
+  assert.match(summary.blocks[0].text.text, /Help center edits this week: \*2\* from loop cards, 7 in total$/);
 });
 
 // --- buildWeeklySummary: rejected, and why ----------------------------------------
