@@ -511,7 +511,7 @@ function contextSection({ candidate, reportingEvent, note, title, saysNow }) {
 function actionSections({ kind, claudeRequest }) {
   if (kind === 'question') {
     return [
-      '*Does anyone know?*\nReply with the answer, or react :x: if it is not worth adding. Once there is an answer, reply *@Claude* with it and Claude writes it up.',
+      '*Does anyone know?*\nReply with the answer, or react :x: if it is not worth adding. Once there is an answer, reply here with *@Claude* and the answer. Claude reads the article, proposes the wording, and opens the change once you approve.',
     ];
   }
   if (kind === 'check') {

@@ -388,7 +388,7 @@ test('buildGapThread: a question card asks for the answer, with no box and no @C
   const texts = buildGapThread({ candidate, linked: [sidecarEvent({ kind: 'model_detected', truth_kind: 'none', truth_answer: null })], now: NOW }).blocks.map((b) => b.text.text);
   assert.deepEqual(texts, [
     '*Asked:* "Customer tags: the "do not service" flag"\n*The article says today:* nothing about this. The closest article is Managing Customer Tags.',
-    '*Does anyone know?*\nReply with the answer, or react :x: if it is not worth adding. Once there is an answer, reply *@Claude* with it and Claude writes it up.',
+    '*Does anyone know?*\nReply with the answer, or react :x: if it is not worth adding. Once there is an answer, reply here with *@Claude* and the answer. Claude reads the article, proposes the wording, and opens the change once you approve.',
   ]);
 });
 
