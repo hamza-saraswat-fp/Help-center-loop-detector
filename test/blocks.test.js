@@ -12,6 +12,7 @@ import {
   articleTitle,
   reportedBy,
   conversationLink,
+  cardKind,
   buildGapPost,
   buildGapThread,
   buildDuplicateReply,
@@ -240,216 +241,167 @@ test('conversationLink: no source_link -> null', () => {
   assert.equal(conversationLink(null, {}), null);
 });
 
+// --- cardKind ------------------------------------------------------------------
+
+test('cardKind: confirmed by default, question when nobody answered, check when the loop is not sure', () => {
+  assert.equal(cardKind(baseCandidate()), 'confirmed');
+  assert.equal(cardKind(baseCandidate({ needs_answer: true })), 'question');
+  assert.equal(cardKind(baseCandidate({ confidence: 39 })), 'check');
+  // A low-confidence gap gets a look before anyone is asked to answer it.
+  assert.equal(cardKind(baseCandidate({ needs_answer: true, confidence: 10 })), 'check');
+  assert.equal(cardKind(baseCandidate({ confidence: null })), 'confirmed');
+});
+
 // --- buildGapPost ------------------------------------------------------------
 
-test('buildGapPost: header line, dot, article title and headline', () => {
-  const card = buildGapPost({ candidate: baseCandidate(), linked: linkedFixture(), now: NOW });
+const SIDECAR_BASE = 'https://sidecar.example';
+
+test('buildGapPost: a confirmed card is three lines, the article linked in the heading, then the ask', () => {
+  const card = buildGapPost({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW, sidecarBaseUrl: SIDECAR_BASE });
   assert.equal(
     card.blocks[0].text.text,
-    ':red_circle: *Wrong information* · Managing Customer Tags\nThe article says there is no do-not-service flag. There is one.',
+    ':red_circle: *<https://help.fieldpulse.com/using-fieldpulse/customers/tags|Managing Customer Tags>*\n' +
+      'The article says there is no do-not-service flag. There is one.\n' +
+      'Want this changed? Reply here with *@Claude* and say yes. React :x: if not.',
+  );
+  assert.equal(card.blocks.length, 2, 'no buttons, no footer line');
+});
+
+test('buildGapPost: the context line has who reported it, the gap id, and the conversation as a link', () => {
+  const card = buildGapPost({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW, sidecarBaseUrl: SIDECAR_BASE });
+  assert.equal(card.blocks[1].type, 'context');
+  assert.equal(
+    card.blocks[1].elements[0].text,
+    "Reported by a Tech Support rep in Sidecar · Sep 3 · Gap #148 · <https://sidecar.example/admin/all/activity/c/feaf65b0|See the rep's conversation>",
   );
 });
 
-test('buildGapPost: no article -> the " · title" segment is omitted', () => {
-  const candidate = baseCandidate({ target_article_path: null, target_article_url: null });
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.ok(card.blocks[0].text.text.startsWith(':red_circle: *Wrong information*\n'));
+test('buildGapPost: "seen N times" only when there is more than one linked event, and no conversation link without a base url', () => {
+  const card = buildGapPost({ candidate: baseCandidate(), linked: linkedFixture(), now: NOW });
+  assert.equal(card.blocks[1].elements[0].text, 'Reported by a Tech Support rep in Sidecar · Sep 10 · Gap #148 · seen 3 times');
+});
+
+test('buildGapPost: a confirmed card with no article says a new article is needed', () => {
+  const candidate = baseCandidate({ verdict: 'MISSING', target_article_path: null, target_article_url: null });
+  const card = buildGapPost({ candidate, linked: [sidecarEvent()], now: NOW });
+  assert.match(card.blocks[0].text.text, /^:red_circle: \*New article needed\*\n/);
+});
+
+test('buildGapPost: a question card asks who knows, and names the closest article', () => {
+  const candidate = baseCandidate({ needs_answer: true, verdict: 'MISSING', priority: 'P3', confidence: 75 });
+  const card = buildGapPost({ candidate, linked: [sidecarEvent({ kind: 'model_detected', truth_kind: 'none', truth_answer: null })], now: NOW });
+  assert.equal(
+    card.blocks[0].text.text,
+    ':white_circle: *Needs an answer* · <https://help.fieldpulse.com/using-fieldpulse/customers/tags|Managing Customer Tags>\n' +
+      'The article says there is no do-not-service flag. There is one.\n' +
+      '*Does anyone know?* Reply with the answer, or react :x: if it is not worth adding.',
+  );
+});
+
+test('buildGapPost: a check card asks for a look, with or without an article', () => {
+  const withArticle = buildGapPost({ candidate: baseCandidate({ confidence: 30 }), linked: [sidecarEvent()], now: NOW });
+  assert.match(withArticle.blocks[0].text.text, /^:red_circle: \*Possible gap, not sure\* · <https:[^|]+\|Managing Customer Tags>\n.*\nTake a look\. React :x: if it is noise, or reply with what is wrong\.$/s);
+  const without = buildGapPost({ candidate: baseCandidate({ confidence: 30, target_article_path: null, target_article_url: null }), linked: [sidecarEvent()], now: NOW });
+  assert.match(without.blocks[0].text.text, /^:red_circle: \*Possible gap, not sure\*\n/);
 });
 
 test('buildGapPost: headline falls back to question_paraphrase', () => {
-  const candidate = baseCandidate({ headline: null });
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.ok(card.blocks[0].text.text.endsWith(candidate.question_paraphrase));
+  const card = buildGapPost({ candidate: baseCandidate({ headline: null }), linked: [sidecarEvent()], now: NOW });
+  assert.match(card.blocks[0].text.text, /\nCustomer tags: the "do not service" flag\n/);
 });
 
-test('buildGapPost: null priority -> white circle', () => {
-  const candidate = baseCandidate({ priority: null });
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.ok(card.blocks[0].text.text.startsWith(':white_circle:'));
+test('buildGapPost: the dot is the priority, white when unset', () => {
+  assert.match(buildGapPost({ candidate: baseCandidate({ priority: 'P2' }), linked: [], now: NOW }).blocks[0].text.text, /^:large_orange_circle: /);
+  assert.match(buildGapPost({ candidate: baseCandidate({ priority: 'P3' }), linked: [], now: NOW }).blocks[0].text.text, /^:white_circle: /);
+  assert.match(buildGapPost({ candidate: baseCandidate({ priority: null }), linked: [], now: NOW }).blocks[0].text.text, /^:white_circle: /);
 });
 
-test('buildGapPost: P2 and P3 dots', () => {
-  assert.ok(buildGapPost({ candidate: baseCandidate({ priority: 'P2' }), linked: [], now: NOW }).blocks[0].text.text.startsWith(':large_orange_circle:'));
-  assert.ok(buildGapPost({ candidate: baseCandidate({ priority: 'P3' }), linked: [], now: NOW }).blocks[0].text.text.startsWith(':white_circle:'));
+test('buildGapPost: the plain-text fallback keeps the verdict word and the kind', () => {
+  assert.equal(buildGapPost({ candidate: baseCandidate(), linked: [], now: NOW }).text, 'Wrong information: The article says there is no do-not-service flag. There is one.');
+  assert.match(buildGapPost({ candidate: baseCandidate({ confidence: 30 }), linked: [], now: NOW }).text, /^Wrong information \(not sure\):/);
+  assert.match(buildGapPost({ candidate: baseCandidate({ needs_answer: true }), linked: [], now: NOW }).text, /^Wrong information · needs an answer:/);
 });
 
-test('buildGapPost: confidence below 40 suffixes "(not sure)"', () => {
-  const candidate = baseCandidate({ confidence: 30 });
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.ok(card.blocks[0].text.text.includes('*Wrong information (not sure)*'));
+test('buildGapPost: throws ForbiddenMentionError when the headline carries a mention, and never emits one otherwise', () => {
+  assert.throws(() => buildGapPost({ candidate: baseCandidate({ headline: 'Ping <@U123ABC> please' }), linked: [], now: NOW }), ForbiddenMentionError);
+  const card = buildGapPost({ candidate: baseCandidate(), linked: linkedFixture(), now: NOW, sidecarBaseUrl: SIDECAR_BASE });
+  for (const t of [card.blocks[0].text.text, card.blocks[1].elements[0].text, card.text]) assert.doesNotMatch(t, /<@|<!/);
 });
 
-test('buildGapPost: needs_answer suffixes " · needs an answer"', () => {
-  const candidate = baseCandidate({ needs_answer: true, verdict: 'MISSING' });
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.ok(card.blocks[0].text.text.includes('*Not covered · needs an answer*'));
-});
-
-test('buildGapPost: both suffixes compose', () => {
-  const candidate = baseCandidate({ needs_answer: true, verdict: 'MISSING', confidence: 10 });
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.ok(card.blocks[0].text.text.includes('*Not covered (not sure) · needs an answer*'));
-});
-
-test('buildGapPost: context line has reportedBy and the gap id, and "seen N times" only when there is more than one linked event', () => {
-  const one = buildGapPost({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW });
-  assert.equal(one.blocks[1].elements[0].text, 'Reported by a Tech Support rep in Sidecar · Sep 3 · Gap #148');
-
-  const many = buildGapPost({ candidate: baseCandidate(), linked: linkedFixture(), now: NOW });
-  assert.match(many.blocks[1].elements[0].text, / · Gap #148 · seen 3 times$/);
-});
-
-test('buildGapPost: both buttons when there is an article and a conversation link', () => {
-  const card = buildGapPost({
-    candidate: baseCandidate(),
-    linked: [sidecarEvent()],
-    now: NOW,
-    sidecarBaseUrl: 'https://project-sidecar.vercel.app',
-  });
-  const actions = card.blocks.find((b) => b.type === 'actions');
-  assert.ok(actions, 'no actions block');
-  assert.deepEqual(
-    actions.elements.map((e) => e.text.text),
-    ['Open the article', "See the rep's conversation"],
-  );
-});
-
-test('buildGapPost: buttons omitted individually when their source is missing', () => {
-  const noArticle = buildGapPost({ candidate: baseCandidate({ target_article_url: null }), linked: [sidecarEvent()], now: NOW, sidecarBaseUrl: 'https://x' });
-  assert.deepEqual(
-    noArticle.blocks.find((b) => b.type === 'actions').elements.map((e) => e.text.text),
-    ["See the rep's conversation"],
-  );
-
-  const noConvo = buildGapPost({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW, sidecarBaseUrl: '' });
-  assert.deepEqual(
-    noConvo.blocks.find((b) => b.type === 'actions').elements.map((e) => e.text.text),
-    ['Open the article'],
-  );
-});
-
-test('buildGapPost: the actions block is omitted entirely when there are no buttons', () => {
-  const candidate = baseCandidate({ target_article_url: null });
-  const card = buildGapPost({ candidate, linked: [jujuEvent({ source_link: null })], now: NOW });
-  assert.equal(card.blocks.some((b) => b.type === 'actions'), false);
-});
-
-test('buildGapPost: the fixed "Fix it or reject it" context line is always last', () => {
-  const card = buildGapPost({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW });
-  const last = card.blocks[card.blocks.length - 1];
-  assert.deepEqual(last, { type: 'context', elements: [{ type: 'mrkdwn', text: 'Fix it or reject it in the thread :arrow_down:' }] });
-});
-
-test('buildGapPost: text fallback is "<label>: <headline>"', () => {
-  const candidate = baseCandidate();
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.equal(card.text, `Wrong information: ${candidate.headline}`);
-});
-
-test('buildGapPost: text fallback reflects the modified label', () => {
-  const candidate = baseCandidate({ needs_answer: true, verdict: 'MISSING' });
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.equal(card.text, `Not covered · needs an answer: ${candidate.headline}`);
-});
-
-test('buildGapPost: throws ForbiddenMentionError when the paraphrase/headline carries a mention', () => {
-  const candidate = baseCandidate({ headline: null, question_paraphrase: 'Ping <@U123ABC> please' });
-  assert.throws(() => buildGapPost({ candidate, linked: linkedFixture(), now: NOW }), ForbiddenMentionError);
-});
-
-test('buildGapPost: never contains a Slack mention for a normal candidate', () => {
-  const card = buildGapPost({ candidate: baseCandidate(), linked: linkedFixture(), now: NOW });
-  assert.doesNotMatch(card.text, /<@|<!/);
-  for (const block of card.blocks) {
-    const texts = block.text ? [block.text.text] : (block.elements ?? []).map((e) => e.text?.text).filter(Boolean);
-    for (const t of texts) assert.doesNotMatch(t, /<@|<!/);
-  }
+test('buildGapPost: text stays within 4000 chars and sections within 3000 for a long headline', () => {
+  const card = buildGapPost({ candidate: baseCandidate({ headline: 'x'.repeat(5000) }), linked: linkedFixture(), now: NOW });
+  assert.ok(card.text.length <= 4000);
+  assert.ok(card.blocks[0].text.text.length <= 3000);
 });
 
 // --- buildGapThread ------------------------------------------------------------
 
-test('buildGapThread: "What happened" for a sidecar report with a human note', () => {
+test('buildGapThread: a confirmed card gets three lines of context, then To fix it, the box, and the closing line', () => {
   const candidate = baseCandidate();
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
+  const linked = [sidecarEvent()];
+  const texts = buildGapThread({ candidate, linked, now: NOW }).blocks.map((b) => b.text.text);
+  assert.equal(texts.length, 4);
   assert.equal(
-    thread.blocks[0].text.text,
-    `*What happened*\nA Tech Support rep asked Sidecar: "${candidate.question_paraphrase}" The rep marked the answer wrong and wrote:\n> CFR adds 4% fee not 3%`,
+    texts[0],
+    '*Asked:* "Customer tags: the "do not service" flag"\n' +
+      '*The rep wrote:* "CFR adds 4% fee not 3%"\n' +
+      '*The article says today:* "FieldPulse doesn\'t have a built-in do-not-service flag."',
   );
-});
-
-test('buildGapThread: "What happened" for a juju report with a human note (product owner)', () => {
-  const candidate = baseCandidate();
-  const thread = buildGapThread({ candidate, linked: [jujuEvent()], now: NOW });
   assert.equal(
-    thread.blocks[0].text.text,
-    `*What happened*\nSomeone asked Juju in Slack: "${candidate.question_paraphrase}" A product owner answered:\n> Yes, from Schedule > select the jobs > Reassign > choose the new tech.`,
+    texts[1],
+    '*To fix it*\nReply here with *@Claude* and say yes. Claude reads the article, proposes the wording, and opens the change once you approve. If Claude needs more, paste the request below with your reply.',
   );
+  const request = buildClaudeRequest({ candidate, reportingEvent: linked[0], note: linked[0].truth_answer });
+  assert.equal(texts[2], `\`\`\`${request}\`\`\``);
+  assert.equal(texts[3], "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.");
 });
 
-test('buildGapThread: no human note yet', () => {
-  const candidate = baseCandidate();
-  const thread = buildGapThread({
-    candidate,
-    linked: [jujuEvent({ kind: 'escalation', truth_kind: 'none', truth_answer: null })],
-    now: NOW,
-  });
-  assert.equal(
-    thread.blocks[0].text.text,
-    `*What happened*\nSomeone asked Juju in Slack: "${candidate.question_paraphrase}" Nobody has confirmed the right answer yet.`,
-  );
+test('buildGapThread: a juju note is attributed to a product owner', () => {
+  const texts = buildGapThread({ candidate: baseCandidate(), linked: [jujuEvent()], now: NOW }).blocks.map((b) => b.text.text);
+  assert.match(texts[0], /\n\*A product owner answered:\* "Yes, from Schedule > select the jobs > Reassign > choose the new tech\."\n/);
 });
 
-test('buildGapThread: the note is scrubbed of a Slack mention and cut to 300 chars', () => {
-  const longNote = `hey <@U123> ${'x'.repeat(400)}`;
-  const thread = buildGapThread({
-    candidate: baseCandidate(),
-    linked: [sidecarEvent({ truth_answer: longNote })],
-    now: NOW,
-  });
-  const whatHappened = thread.blocks[0].text.text;
-  assert.doesNotMatch(whatHappened, /<@U123>/);
-  assert.match(whatHappened, /@someone/);
-  const noteLine = whatHappened.split('\n').find((l) => l.startsWith('>'));
-  assert.ok(noteLine.length <= 302, `note line length ${noteLine.length}`); // "> " + 300
+test('buildGapThread: no human note means no note line', () => {
+  const texts = buildGapThread({ candidate: baseCandidate(), linked: [jujuEvent({ kind: 'escalation', truth_kind: 'none', truth_answer: null })], now: NOW }).blocks.map((b) => b.text.text);
+  assert.equal(texts[0].split('\n').length, 2);
+  assert.doesNotMatch(texts[0], /answered|wrote/);
 });
 
-test('buildGapThread: a three-line note is quoted on every line, not just the first', () => {
-  const note = 'first line\nsecond line\nthird line';
-  const thread = buildGapThread({
-    candidate: baseCandidate(),
-    linked: [sidecarEvent({ truth_answer: note })],
-    now: NOW,
-  });
-  const whatHappened = thread.blocks[0].text.text;
-  const quotedLines = whatHappened.split('\n').slice(-3);
-  assert.deepEqual(quotedLines, ['> first line', '> second line', '> third line']);
+test('buildGapThread: the note is scrubbed of a Slack mention, cut to 300 chars, and flattened to one line', () => {
+  const longNote = `hey <@U123> first\nsecond ${'x'.repeat(400)}`;
+  const texts = buildGapThread({ candidate: baseCandidate(), linked: [sidecarEvent({ truth_answer: longNote })], now: NOW }).blocks.map((b) => b.text.text);
+  const noteLine = texts[0].split('\n')[1];
+  assert.doesNotMatch(noteLine, /<@U123>/);
+  assert.match(noteLine, /@someone first second x+…"$/);
+  assert.ok(noteLine.length <= 330, `note line length ${noteLine.length}`);
 });
 
-test('buildGapThread: a multi-line says_now is quoted on every line', () => {
-  const candidate = baseCandidate({ says_now: 'line one\nline two' });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  const todaySection = thread.blocks[1].text.text;
-  assert.ok(todaySection.includes('> line one\n> line two'));
+test('buildGapThread: says today falls back to the closest article, then to no article', () => {
+  const closest = buildGapThread({ candidate: baseCandidate({ says_now: null }), linked: [sidecarEvent()], now: NOW }).blocks[0].text.text;
+  assert.match(closest, /\*The article says today:\* nothing about this\. The closest article is Managing Customer Tags\.$/);
+  const none = buildGapThread({ candidate: baseCandidate({ says_now: null, target_article_path: null, target_article_url: null }), linked: [sidecarEvent()], now: NOW }).blocks[0].text.text;
+  assert.match(none, /\*The article says today:\* no article covers this\.$/);
 });
 
-test('buildGapThread: article says today - says_now present', () => {
-  const thread = buildGapThread({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW });
-  assert.equal(
-    thread.blocks[1].text.text,
-    "*The article says today*\n> FieldPulse doesn't have a built-in do-not-service flag.",
-  );
+test('buildGapThread: a question card asks for the answer, with no box and no @Claude yes', () => {
+  const candidate = baseCandidate({ needs_answer: true, verdict: 'MISSING', says_now: null, confidence: 75 });
+  const texts = buildGapThread({ candidate, linked: [sidecarEvent({ kind: 'model_detected', truth_kind: 'none', truth_answer: null })], now: NOW }).blocks.map((b) => b.text.text);
+  assert.deepEqual(texts, [
+    '*Asked:* "Customer tags: the "do not service" flag"\n*The article says today:* nothing about this. The closest article is Managing Customer Tags.',
+    '*Does anyone know?*\nReply with the answer, or react :x: if it is not worth adding. Once there is an answer, reply *@Claude* with it and Claude writes it up.',
+  ]);
 });
 
-test('buildGapThread: article says today - no says_now but a target article exists', () => {
-  const candidate = baseCandidate({ says_now: null, verdict: 'MISSING', should_say: null, proposed_change: 'Add a note about the fee.' });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  assert.match(thread.blocks[1].text.text, /Nothing about this\. The closest article is Managing Customer Tags\./);
+test('buildGapThread: a check card asks for a look, with no box', () => {
+  const texts = buildGapThread({ candidate: baseCandidate({ confidence: 30 }), linked: [sidecarEvent()], now: NOW }).blocks.map((b) => b.text.text);
+  assert.equal(texts.length, 2);
+  assert.equal(texts[1], '*Take a look*\nReact :x: if it is noise, or reply with what is wrong. If it is a real gap, reply *@Claude* and say what should change.');
 });
 
-test('buildGapThread: article says today - no target article at all', () => {
-  const candidate = baseCandidate({ says_now: null, target_article_path: null, target_article_url: null });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  assert.match(thread.blocks[1].text.text, /No article covers this\./);
+test('buildGapThread: check wins over question, and the request is not built for it', () => {
+  const texts = buildGapThread({ candidate: baseCandidate({ needs_answer: true, confidence: 10 }), linked: [sidecarEvent()], now: NOW }).blocks.map((b) => b.text.text);
+  assert.match(texts[1], /^\*Take a look\*/);
+  assert.doesNotMatch(texts.join('\n'), /```/);
 });
 
 // Claude Tag writes the wording, in the thread, with the channel's memory.
@@ -462,147 +414,34 @@ test("buildGapThread: the loop's draft wording never appears, in any section", (
     baseCandidate({ paste_request: 'In "Tags", replace "old words" with "new words".' }),
   ];
   for (const candidate of drafts) {
-    const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-    const all = thread.blocks.map((b) => b.text.text).join('\n');
-    assert.doesNotMatch(all, /It should say|Add this|Draft, unconfirmed/);
+    const all = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW }).blocks.map((b) => b.text.text).join('\n');
+    assert.doesNotMatch(all, /It should say|Add this|Draft, unconfirmed|How sure/);
     assert.doesNotMatch(all, /Apply the Do Not Service tag|Add a note about the fee|Add this fact|new words/);
   }
 });
 
-test('buildGapThread: To fix it - normal variant has the exact copy and the request for Claude', () => {
-  const candidate = baseCandidate();
-  const linked = [sidecarEvent()];
-  const thread = buildGapThread({ candidate, linked, now: NOW });
-  assert.equal(
-    thread.blocks[2].text.text,
-    '*To fix it*\nReply in this thread with *@Claude* and the request below. Claude reads the article, proposes the wording, and opens the change once you say yes.',
-  );
-  // The box is a section of its own, so Slack's "Show more" fold can never
-  // land inside it and hide the text a person has to copy.
-  const request = buildClaudeRequest({ candidate, reportingEvent: linked[0], note: linked[0].truth_answer });
-  assert.equal(thread.blocks[3].text.text, `\`\`\`${request}\`\`\``);
-  assert.equal(
-    thread.blocks[4].text.text,
-    "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.",
-  );
-  assert.equal(thread.blocks.length, 6);
-});
-
-test('buildGapThread: To fix it - low confidence variant replaces the sentence and drops the code block', () => {
-  const candidate = baseCandidate({ confidence: 30 });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  const block = thread.blocks[2].text.text;
-  assert.equal(
-    block,
-    "*To fix it*\nThis one needs a human look before anything is changed. If you know the right answer, update the article, then react :white_check_mark:. React :x: if this isn't a real gap.",
-  );
-  assert.doesNotMatch(block, /```/);
-});
-
-test('buildGapThread: To fix it - needs_answer asks the human to fill in the answer, draft or no draft', () => {
-  const unconfirmed = sidecarEvent({ kind: 'model_detected', truth_kind: 'none', truth_answer: null });
-  for (const proposed_change of [null, 'Add this fact.']) {
-    const candidate = baseCandidate({ needs_answer: true, verdict: 'MISSING', should_say: null, proposed_change, confidence: 88 });
-    const thread = buildGapThread({ candidate, linked: [unconfirmed], now: NOW });
-    assert.equal(
-      thread.blocks[2].text.text,
-      '*To fix it*\nNobody has confirmed the answer yet. If you know it, reply in this thread with *@Claude* and the request below, with the answer filled in. Claude proposes the wording and opens the change once you say yes.',
-    );
-    assert.match(thread.blocks[3].text.text, /^```Gap #148\. .*The right answer is: <type it here>\. Propose what to add and where\.```$/);
-    assert.equal(thread.blocks[4].text.text, "React :x: if this isn't a real gap.");
-  }
-});
-
-test('buildGapThread: low confidence wins over the needs_answer variant', () => {
-  const candidate = baseCandidate({ needs_answer: true, verdict: 'MISSING', proposed_change: 'Add this fact.', confidence: 10 });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  assert.match(thread.blocks[2].text.text, /^\*To fix it\*\nThis one needs a human look before anything is changed\./);
-});
-
-test('buildGapThread: How sure is this - says_now present names the article', () => {
-  const candidate = baseCandidate({ confidence: 85 });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  assert.equal(
-    thread.blocks.at(-1).text.text,
-    '*How sure is this?*\nFairly sure (85%). The loop read 10 articles and found that sentence in Managing Customer Tags.',
-  );
-});
-
-test('buildGapThread: How sure is this - MISSING with no says_now', () => {
-  const candidate = baseCandidate({ verdict: 'MISSING', says_now: null, confidence: 75, evidence: { files_read: ['a.mdx', 'b.mdx'] } });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  assert.equal(
-    thread.blocks.at(-1).text.text,
-    '*How sure is this?*\nFairly sure (75%). The loop read 2 articles; none of them cover this.',
-  );
-});
-
-test('buildGapThread: How sure is this - neither ending applies', () => {
-  const candidate = baseCandidate({ verdict: 'NEEDS_EDIT', says_now: null, confidence: null, evidence: { files_read: [] } });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  assert.equal(thread.blocks.at(-1).text.text, '*How sure is this?*\nNot rated. The loop read 0 articles.');
-});
-
 test('buildGapThread: text fallback is "How to fix gap #<id>"', () => {
-  const thread = buildGapThread({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW });
-  assert.equal(thread.text, 'How to fix gap #148');
+  assert.equal(buildGapThread({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW }).text, 'How to fix gap #148');
 });
 
-test('buildGapThread: the "with *@Claude*" line passes the mention guard, and no mention leaks elsewhere', () => {
+test('buildGapThread: the "with *@Claude*" lines pass the mention guard, and no mention leaks elsewhere', () => {
   const thread = buildGapThread({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW });
-  for (const block of thread.blocks) {
-    assert.doesNotMatch(block.text.text, /<@|<!/);
-  }
-  assert.ok(thread.blocks[2].text.text.includes('*@Claude*'));
+  for (const block of thread.blocks) assert.doesNotMatch(block.text.text, /<@|<!/);
+  assert.ok(thread.blocks[1].text.text.includes('*@Claude*'));
 });
 
 test('buildGapThread: throws ForbiddenMentionError when the question_paraphrase carries a mention', () => {
-  const candidate = baseCandidate({ question_paraphrase: 'Ping <@U123ABC> please' });
-  assert.throws(() => buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW }), ForbiddenMentionError);
+  assert.throws(() => buildGapThread({ candidate: baseCandidate({ question_paraphrase: 'Ping <@U123ABC> please' }), linked: [sidecarEvent()], now: NOW }), ForbiddenMentionError);
 });
 
-test('buildGapThread: size limits with a 12k-char proposed_change', () => {
-  const candidate = baseCandidate({ should_say: 'x'.repeat(12000) });
+test('buildGapThread: a 12k says_now and a 12k question stay within limits and keep the box closed', () => {
+  const candidate = baseCandidate({ says_now: 'x'.repeat(12000), question_paraphrase: 'y'.repeat(12000) });
   const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-  for (const block of thread.blocks) {
-    assert.ok(block.text.text.length <= 3000, `section length ${block.text.text.length}`);
-  }
-  assert.ok(thread.text.length <= 4000);
-});
-
-test('buildGapThread: a 12k says_now and a 12k question together do not break the "says today" or "To fix it" sections', () => {
-  const candidate = baseCandidate({
-    says_now: 'x'.repeat(12000),
-    question_paraphrase: 'y'.repeat(12000),
-  });
-  const thread = buildGapThread({ candidate, linked: [sidecarEvent()], now: NOW });
-
-  const todaySection = thread.blocks[1].text.text;
-  assert.match(todaySection, /^\*The article says today\*\n> x+…?$/, 'the heading and the quoted sentence must survive');
-
-  const box = thread.blocks[3].text.text;
-  const fenceCount = (box.match(/```/g) ?? []).length;
-  assert.equal(fenceCount, 2, `expected exactly one balanced code fence, found ${fenceCount} backtick runs`);
+  for (const block of thread.blocks) assert.ok(block.text.text.length <= 3000, `section length ${block.text.text.length}`);
+  const box = thread.blocks[2].text.text;
+  assert.equal((box.match(/```/g) ?? []).length, 2);
   assert.match(box, /^```Gap #148\. /);
-  assert.match(
-    thread.blocks[4].text.text,
-    /^Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done\. React :x: if this isn't a real gap\.$/,
-    'the closing accept/reject instruction must survive verbatim',
-  );
-  for (const block of thread.blocks) {
-    assert.ok(block.text.text.length <= 3000, `section length ${block.text.text.length}`);
-  }
-});
-
-// --- buildGapPost size limits ------------------------------------------------
-
-test('buildGapPost: text stays within 4000 chars and sections within 3000 for a long headline', () => {
-  const candidate = baseCandidate({ headline: 'x'.repeat(5000) });
-  const card = buildGapPost({ candidate, linked: linkedFixture(), now: NOW });
-  assert.ok(card.text.length <= 4000, `text length ${card.text.length}`);
-  for (const block of card.blocks) {
-    if (block?.text?.text) assert.ok(block.text.text.length <= 3000, `section length ${block.text.text.length}`);
-  }
+  assert.match(thread.blocks[3].text.text, /^Or make the edit yourself/);
 });
 
 // --- buildDuplicateReply ------------------------------------------------------
@@ -769,7 +608,7 @@ test('buildGapThread: a truth_summary with a line starting @Claude throws', () =
 
 test('buildGapThread: a normal candidate still builds and its thread contains the approved sentence', () => {
   const thread = buildGapThread({ candidate: baseCandidate(), linked: [sidecarEvent()], now: NOW });
-  assert.match(thread.blocks[2].text.text, /Reply in this thread with \*@Claude\* and the request below\./);
+  assert.match(thread.blocks[1].text.text, /Reply here with \*@Claude\* and say yes\./);
 });
 
 // --- buildWeeklySummary: rejected, and why ----------------------------------------

@@ -72,40 +72,17 @@ function sampleLinked() {
 const SAMPLE_NOW = new Date('2026-09-15T12:00:00Z');
 const SAMPLE_SIDECAR_BASE_URL = 'https://project-sidecar.vercel.app';
 
-test("manual's card sample matches buildGapPost's headline and reportedBy line verbatim", () => {
-  const post = buildGapPost({
-    candidate: sampleCandidate(),
-    linked: sampleLinked(),
-    now: SAMPLE_NOW,
-    sidecarBaseUrl: SAMPLE_SIDECAR_BASE_URL,
-  });
-  assert.ok(manual.includes(post.blocks[0].text.text), 'manual should contain the header section verbatim');
-  assert.ok(manual.includes(post.blocks[1].elements[0].text), 'manual should contain the reportedBy context line verbatim');
+test("manual's card sample matches buildGapPost word for word", () => {
+  const post = buildGapPost({ candidate: sampleCandidate(), linked: sampleLinked(), now: SAMPLE_NOW, sidecarBaseUrl: SAMPLE_SIDECAR_BASE_URL });
+  const text = `${post.blocks[0].text.text}\n\n${post.blocks[1].elements[0].text}`;
+  assert.ok(manual.includes(`\`\`\`\n${text}\n\`\`\``), 'manual should contain the channel post verbatim');
 });
 
-test("manual's thread sample contains the exact To fix it first sentence buildGapThread emits", () => {
+test("manual's thread sample matches buildGapThread word for word, and carries no draft wording", () => {
   const thread = buildGapThread({ candidate: sampleCandidate(), linked: sampleLinked(), now: SAMPLE_NOW });
-  const toFixIt = thread.blocks[2].text.text;
-  const firstSentence = toFixIt.split('\n')[1];
-
-  assert.match(firstSentence, /^Reply in this thread with \*@Claude\* and the request below\./);
-  assert.ok(manual.includes(firstSentence), 'manual should contain the To fix it first sentence verbatim');
-});
-
-test("manual's thread sample carries the exact request buildGapThread puts in the box, and no draft wording", () => {
-  const thread = buildGapThread({ candidate: sampleCandidate(), linked: sampleLinked(), now: SAMPLE_NOW });
-  const request = thread.blocks[3].text.text.split('```')[1];
-
-  assert.match(request, /^Gap #9\. Article: /);
-  assert.ok(manual.includes(`\`\`\`\n${request}\n\`\`\``), 'manual should contain the boxed request verbatim');
-  assert.ok(manual.includes(thread.blocks[1].text.text), 'manual should contain the says-today section verbatim');
-  assert.doesNotMatch(manual, /\*It should say\*/);
-});
-
-test("manual's thread sample matches buildGapThread's How sure section verbatim", () => {
-  const thread = buildGapThread({ candidate: sampleCandidate(), linked: sampleLinked(), now: SAMPLE_NOW });
-  const howSure = thread.blocks.at(-1).text.text;
-  assert.ok(manual.includes(howSure), 'manual should contain the How sure is this section verbatim');
+  const text = thread.blocks.map((b) => b.text.text).join('\n\n');
+  assert.ok(manual.includes(`\`\`\`\`\n${text}\n\`\`\`\``), 'manual should contain the thread reply verbatim');
+  assert.doesNotMatch(manual, /\*It should say\*|How sure is this\?/);
 });
 
 test("manual's daily check sample matches buildDailyPost and buildDailyThread word for word", () => {

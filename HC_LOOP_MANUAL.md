@@ -51,104 +51,85 @@ posted as individual docs requests, see Routing.
 
 ## Card format
 
-Cards v2: the channel post is a plain-language headline for a help center
-writer, and the story of what happened plus the ask to fix it live in the
-thread reply underneath it. The work happens in the thread, not the post.
+Cards v3: the channel post leads with the change and the ask, in three
+lines, for a help center writer who has ten seconds. The context (what was
+asked, what the rep said, what the article says today) and the kind's own
+instruction live in the thread reply underneath. The work happens in the
+thread, not the post.
 
-The channel post, for a real gap (candidate #9, card fee recovery):
+There are three kinds of card, decided by `cardKind` in
+`src/slack/blocks.js`:
+
+| Kind | When | The ask |
+| --- | --- | --- |
+| Confirmed change | A rep or product owner gave the right answer, and the loop is at least 40% sure | "Want this changed? Reply here with @Claude and say yes." |
+| Needs an answer | A real gap, but nobody has confirmed the truth (`needs_answer`) | "Does anyone know? Reply with the answer, or react :x:." |
+| Possible gap, not sure | Confidence below 40 | "Take a look. React :x: if it is noise." |
+
+A low-confidence gap is a "not sure" card even when nobody has answered
+it: it gets a look before anyone is asked to answer.
+
+The channel post, for a confirmed change (candidate #9, card fee recovery):
 
 ```
-:red_circle: *Wrong information* · Card Fee Recovery
+:red_circle: *<https://help.fieldpulse.com/using-fieldpulse/payments/start-here/card-fee-recovery|Card Fee Recovery>*
 The article says the card fee is typically 3%. A rep confirmed it is 4%.
+Want this changed? Reply here with *@Claude* and say yes. React :x: if not.
 
-Reported by a Tech Support rep in Sidecar · Sep 3 · Gap #9
-
-[Open the article]  [See the rep's conversation]
-
-Fix it or reject it in the thread :arrow_down:
+Reported by a Tech Support rep in Sidecar · Sep 3 · Gap #9 · <https://project-sidecar.vercel.app/admin/all/activity/c/feaf65b0-e818-4c34-b10d-1f9fe22c15bf|See the rep's conversation>
 ```
 
 Its thread reply:
 
 ````
-*What happened*
-A Tech Support rep asked Sidecar: "What percentage does card fee recovery add for credit card payments, and for ACH?" The rep marked the answer wrong and wrote:
-> CFR adds 4% fee not 3%
-
-*The article says today*
-> When you enable Card Fee Recovery, each line item on an invoice will be increased by the fee rate you pass on to your customers, which is typically 3%.
+*Asked:* "What percentage does card fee recovery add for credit card payments, and for ACH?"
+*The rep wrote:* "CFR adds 4% fee not 3%"
+*The article says today:* "When you enable Card Fee Recovery, each line item on an invoice will be increased by the fee rate you pass on to your customers, which is typically 3%."
 
 *To fix it*
-Reply in this thread with *@Claude* and the request below. Claude reads the article, proposes the wording, and opens the change once you say yes.
-```
-Gap #9. Article: using-fieldpulse/payments/start-here/card-fee-recovery.mdx. Someone asked: "What percentage does card fee recovery add for credit card payments, and for ACH?" A Tech Support rep wrote: "CFR adds 4% fee not 3%". Propose the fix.
-```
-Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.
+Reply here with *@Claude* and say yes. Claude reads the article, proposes the wording, and opens the change once you approve. If Claude needs more, paste the request below with your reply.
 
-*How sure is this?*
-Fairly sure (85%). The loop read 9 articles and found that sentence in Card Fee Recovery.
+```Gap #9. Article: using-fieldpulse/payments/start-here/card-fee-recovery.mdx. Someone asked: "What percentage does card fee recovery add for credit card payments, and for ACH?" A Tech Support rep wrote: "CFR adds 4% fee not 3%". Propose the fix.```
+
+Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.
 ````
 
-This is exactly what `buildGapPost` and `buildGapThread` in
-`src/slack/blocks.js` produce for a real candidate, not an approximation of
-it; `test/docs.test.js` checks this file against their output word for
-word, so if the code's wording ever changes, this sample has to change with
-it.
+This is exactly what `buildGapPost` and `buildGapThread` produce for a
+real candidate, not an approximation of it; `test/docs.test.js` checks this
+file against their output word for word, so if the code's wording ever
+changes, this sample has to change with it.
 
-The post's label is one of these plain-language words, never the raw
-verdict:
+The heading is the article, linked, so nobody has to click to learn what
+it is; a confirmed change with no article reads "New article needed". The
+dot before it is the priority, red for P1, orange for P2, white for P3 or
+no priority yet. The context line is who reported it, the gap number, "seen
+N times" when more than one event is linked, and the conversation as a
+link. There are no buttons.
 
-| Verdict | Label |
-| --- | --- |
-| `INCORRECT` | Wrong information |
-| `MISSING` | Not covered |
-| `NEEDS_EDIT` | Unclear |
-| `HIDDEN` | Article exists but is hidden |
-| `UNFINDABLE` | Hard to find |
+A "needs an answer" card's thread asks for the answer and has no request
+box: the loop never supplies an answer nobody confirmed, and Claude is not
+asked to guess. A "not sure" card's thread asks for a look, also with no
+box. Only the confirmed card carries the "To fix it" instruction and the
+facts-only request (gap number, article path, what was asked, the confirmed
+answer). The first line of that instruction is the whole ask: reply
+`@Claude` and say yes, and Claude works from the card at the top of the
+thread. The request box is the fallback for when it needs more.
 
-A candidate the loop isn't sure about gets `(not sure)` added to the label;
-one with no confirmed answer yet gets ` · needs an answer` added. The dot
-before the label is the priority, red for P1, orange for P2, white for P3
-or no priority yet.
+The loop does not write the new wording. Claude writes the change in the
+thread, after a human asks it to, using what the channel has taught it
+about how the help center writers want things said. The loop's own draft
+(`should_say`, `proposed_change`, `paste_request`) is still stored on the
+candidate, so it can be compared with what shipped, but it never appears
+on a card. The request never quotes a sentence to find and replace: the
+first live test showed the card fee rate stated twice in the article with
+two worked examples calculated from it, so a one-sentence swap would have
+left the article contradicting itself. Claude reads the whole article.
 
-The thread's "How sure is this?" line uses one of these words for the
-candidate's confidence score:
-
-| Confidence | Word |
-| --- | --- |
-| 90-100 | Very sure |
-| 70-89 | Fairly sure |
-| 40-69 | Not sure |
-| below 40 | Guessing |
-| not rated | Not rated |
-
-The loop does not write the new wording. The thread shows what the article
-says today and stops; Claude writes the change in the thread, after a human
-asks it to, using what the channel has taught it about how the help center
-writers want things said. The loop's own draft (`should_say`,
-`proposed_change`, `paste_request`) is still stored on the candidate, so it
-can be compared with what shipped, but it never appears on a card.
-
-The request in the "To fix it" box carries facts only: the gap number, the
-article's path in the docs repo, what was asked, and the confirmed answer.
-It never quotes a sentence to find and replace. The first live test showed
-why: the card fee rate was stated twice in the article and two worked
-examples were calculated from it, so a one-sentence swap would have left
-the article contradicting itself. Claude reads the whole article and finds
-every place. Everything Claude needs has to be in that box, because Claude
-is shown the thread's top post and the human's message but not this app's
-thread reply.
-
-A candidate with no confirmed answer gets a request with a blank, `The
-right answer is: <type it here>`, and a sentence asking whoever knows the
-answer to fill it in; the loop never supplies an answer nobody confirmed. A
-candidate below 40 confidence gets a "To fix it" section that asks a human
-to look at it before anything changes, with no request at all. Cards never
-carry `<@U...>` mentions or the literal text `@Claude` outside the "To fix
-it" instructions, those instructions only ever tell a *human* what to type,
-they never trigger anything themselves. An `@Claude` inside a quoted note or
-question loses its `@` before it goes in the box, so quoted text can never
-read as a second instruction.
+Cards never carry `<@U...>` mentions or the literal text `@Claude` outside
+the instructions, which only ever tell a *human* what to type and never
+trigger anything themselves. An `@Claude` inside a quoted note or question
+loses its `@` before it goes in the box, so quoted text can never read as
+a second instruction.
 
 ## Routing
 
@@ -161,10 +142,10 @@ usual sense. Candidates destined for `internal` route to the appropriate
 category owner; events with no existing answer (`needs_answer`) get the
 same post and thread, labeled "needs an answer" instead of being routed
 anywhere separately. Shipping a fix means replying `@Claude` in the post's
-thread with the request from the box: Claude proposes the wording in the
-thread, opens the change after a yes, and merges only when told to ship
-it (the channel's instructions in the Claude Tag settings say so). Or make
-the edit yourself and react :white_check_mark:.
+thread and saying yes: Claude proposes the wording in the thread, opens the
+change after you approve it, and merges only when told to ship it (the
+channel's instructions in the Claude Tag settings say so). Or make the
+edit yourself and react :white_check_mark:.
 
 A gap with a human-confirmed answer still posts immediately, exactly as
 above. A gap nobody has confirmed an answer for only posts once it has been
