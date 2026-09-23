@@ -3,11 +3,13 @@
 // (`sidecarBaseUrl`, "now") is passed in by the caller (src/run.js), so this
 // module can be unit-tested without Supabase, Slack, or config/env.js.
 //
-// Cards v2 (see the approved redesign + HC_LOOP_MANUAL.md "Card format"):
-// the channel post is content-first and plain-language for a non-technical
-// help center writer -- `buildGapPost` -- and the story of what happened
-// plus the ask to fix it live in the thread reply -- `buildGapThread`. Cards
-// never @-mention anyone. The literal words "@Claude" appear only in the
+// Cards v3 (see HC_LOOP_MANUAL.md "Card format"): the channel post leads
+// with the change and the ask, in three lines, for a non-technical help
+// center writer -- `buildGapPost` -- and three lines of context plus the
+// kind's own instruction live in the thread reply -- `buildGapThread`.
+// Three kinds of card, decided by `cardKind`: a confirmed change, a
+// question nobody has answered, and a possible gap the loop is not sure
+// about. Cards never @-mention anyone. The literal words "@Claude" appear only in the
 // thread's "To fix it" section, as words a human types, not a Slack mention.
 // `assertNoForbiddenMentions` is the enforcement point every builder here
 // runs before returning, so a bad model-written paraphrase throws at build
@@ -274,11 +276,6 @@ export function confidenceWords(n) {
   return 'Guessing';
 }
 
-function confidenceLabel(n) {
-  const words = confidenceWords(n);
-  return n === null || n === undefined ? words : `${words} (${n}%)`;
-}
-
 // Sidecar's `hc_gap_events_v` kind values that mean a rep flagged the
 // answer as wrong in some specific way (as opposed to `thumbs_down`, a
 // flat down-vote). `model_detected` is Sidecar's own detector finding
@@ -373,9 +370,36 @@ export function conversationLink(event, { sidecarBaseUrl = '' } = {}) {
 }
 
 /**
- * The channel post: one plain-language section, who reported it, and up to
- * two buttons. `{ text, blocks }` ready for `postCard`. Runs
- * `assertNoForbiddenMentions` on the assembled (pre-truncation) content
+ * Which of the three kinds of card a candidate gets. Pure. "check" wins
+ * over "question": a low-confidence gap gets a human look before anyone is
+ * asked to answer it.
+ * @param {object} candidate
+ * @returns {'confirmed'|'question'|'check'}
+ */
+export function cardKind(candidate) {
+  if (typeof candidate.confidence === 'number' && candidate.confidence < 40) return 'check';
+  if (candidate.needs_answer) return 'question';
+  return 'confirmed';
+}
+
+const ASK_LINE = {
+  confirmed: 'Want this changed? Reply here with *@Claude* and say yes. React :x: if not.',
+  question: '*Does anyone know?* Reply with the answer, or react :x: if it is not worth adding.',
+  check: 'Take a look. React :x: if it is noise, or reply with what is wrong.',
+};
+
+// The article as a visible link, so nobody has to click to learn what it is.
+function articleLink(candidate, title) {
+  if (!title) return null;
+  return candidate.target_article_url ? `<${candidate.target_article_url}|${title}>` : title;
+}
+
+/**
+ * The channel post (cards v3): the change first, in three lines. A heading
+ * that names the kind of card and links the article, the one-sentence
+ * headline, and the ask. Under it, one context line: who reported it, the
+ * gap number, and a link to the conversation. `{ text, blocks }` ready for
+ * `postCard`. Runs `assertNoForbiddenMentions` on the assembled content
  * before returning -- a model-written headline or paraphrase that smuggled
  * in a mention throws here, at build time.
  * @param {{candidate:object, linked?:Array<object>, now?:Date, sidecarBaseUrl?:string}} args
@@ -384,16 +408,9 @@ export function conversationLink(event, { sidecarBaseUrl = '' } = {}) {
 export function buildGapPost({ candidate, linked = [], now = new Date(), sidecarBaseUrl = '' }) {
   void now;
   const reportingEvent = pickReportingEvent(linked);
+  const kind = cardKind(candidate);
 
   const dot = (candidate.priority && PRIORITY_DOT[candidate.priority]) || DEFAULT_PRIORITY_DOT;
-  let label = VERDICT_LABELS[candidate.verdict] ?? candidate.verdict ?? 'Gap';
-  if (typeof candidate.confidence === 'number' && candidate.confidence < 40) {
-    label = `${label} (not sure)`;
-  }
-  if (candidate.needs_answer) {
-    label = `${label} · needs an answer`;
-  }
-
   const title = articleTitle(candidate.target_article_path);
   const headline = candidate.headline || candidate.question_paraphrase;
 
@@ -403,37 +420,35 @@ export function buildGapPost({ candidate, linked = [], now = new Date(), sidecar
   // the fully assembled text below.
   assertFieldsClean({ headline, question_paraphrase: candidate.question_paraphrase, article_title: title });
 
-  const headerLine = `${dot} *${label}*${title ? ` · ${title}` : ''}\n${headline}`;
-  const reportedLine =
-    linked.length > 1
-      ? `${reportedBy(reportingEvent)} · Gap #${candidate.id} · seen ${linked.length} times`
-      : `${reportedBy(reportingEvent)} · Gap #${candidate.id}`;
-  const footerLine = 'Fix it or reject it in the thread :arrow_down:';
+  const link = articleLink(candidate, title);
+  let heading;
+  if (kind === 'confirmed') heading = link ? `*${link}*` : '*New article needed*';
+  else if (kind === 'question') heading = `*Needs an answer*${link ? ` · ${link}` : ''}`;
+  else heading = `*Possible gap, not sure*${link ? ` · ${link}` : ''}`;
 
-  const fullPlainText = [headerLine, reportedLine, footerLine].join('\n');
-  assertNoForbiddenMentions(fullPlainText);
+  const body = `${dot} ${heading}\n${headline}\n${ASK_LINE[kind]}`;
 
-  const blocks = [
-    { type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(headerLine, 3000) } },
-    { type: 'context', elements: [{ type: 'mrkdwn', text: truncateSlackText(reportedLine, 3000) }] },
-  ];
-
-  const buttons = [];
-  if (candidate.target_article_url) {
-    buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open the article' }, url: candidate.target_article_url });
-  }
   const convo = conversationLink(reportingEvent, { sidecarBaseUrl });
-  if (convo) {
-    buttons.push({ type: 'button', text: { type: 'plain_text', text: convo.label }, url: convo.url });
-  }
-  if (buttons.length > 0) {
-    blocks.push({ type: 'actions', elements: buttons });
-  }
+  const contextParts = [`${reportedBy(reportingEvent)} · Gap #${candidate.id}`];
+  if (linked.length > 1) contextParts.push(`seen ${linked.length} times`);
+  if (convo) contextParts.push(`<${convo.url}|${convo.label}>`);
+  const contextLine = contextParts.join(' · ');
 
-  blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: footerLine }] });
+  assertNoForbiddenMentions(`${body}\n${contextLine}`);
 
-  const text = truncateSlackText(`${label}: ${headline}`, 4000);
-  return { text, blocks };
+  // The plain-text fallback keeps the verdict word, so a notification and a
+  // search still say what kind of problem it is.
+  let label = VERDICT_LABELS[candidate.verdict] ?? candidate.verdict ?? 'Gap';
+  if (kind === 'check') label = `${label} (not sure)`;
+  if (candidate.needs_answer) label = `${label} · needs an answer`;
+
+  return {
+    text: truncateSlackText(`${label}: ${headline}`, 4000),
+    blocks: [
+      { type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(body, 3000) } },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: truncateSlackText(contextLine, 3000) }] },
+    ],
+  };
 }
 
 function scrubNote(text) {
@@ -465,139 +480,68 @@ function truncateField(value, max = FIELD_BUDGET) {
   return value === null || value === undefined ? value : truncateSlackText(value, max);
 }
 
-/**
- * Slack blockquotes only the line directly after a leading `>`, so a
- * multi-line note, `says_now`, or draft needs `> ` on every line or its
- * second line and beyond render unquoted, outside the box. Runs of blank
- * lines collapse to a single bare `>` rather than one per line.
- * @param {string} text
- * @returns {string}
- */
-function quote(text) {
-  const lines = String(text ?? '').split('\n');
-  const out = [];
-  let blankRun = false;
-  for (const line of lines) {
-    if (line.trim() === '') {
-      if (!blankRun) out.push('>');
-      blankRun = true;
-    } else {
-      out.push(`> ${line}`);
-      blankRun = false;
-    }
-  }
-  return out.length > 0 ? out.join('\n') : '>';
+// One short line each: what was asked, what the person said, what the
+// article says. Quotes are flattened to one line so the thread stays three
+// lines tall.
+function flat(text) {
+  return String(text ?? '').replace(/\s+/g, ' ').trim();
 }
 
-function whatHappenedSection({ candidate, reportingEvent, note }) {
-  const question = candidate.question_paraphrase;
-  let sentence;
-  if (reportingEvent?.source === 'sidecar') {
-    const team = SIDECAR_TEAM_LABELS[reportingEvent.detail?.team] ?? reportingEvent.detail?.team ?? null;
-    sentence = `A ${team ? `${team} ` : ''}rep asked Sidecar: "${question}"`;
-  } else if (reportingEvent?.source === 'juju') {
-    sentence = `Someone asked Juju in Slack: "${question}"`;
-  } else {
-    sentence = `Someone asked: "${question}"`;
+function contextSection({ candidate, reportingEvent, note, title, saysNow }) {
+  const lines = [`*Asked:* "${flat(truncateField(candidate.question_paraphrase))}"`];
+
+  if (note !== null) {
+    let lead;
+    if (reportingEvent?.source === 'sidecar') lead = 'The rep wrote';
+    else if (reportingEvent?.source === 'juju') lead = 'A product owner answered';
+    else lead = 'Someone answered';
+    lines.push(`*${lead}:* "${flat(note)}"`);
   }
 
-  if (note === null) {
-    return `*What happened*\n${sentence} Nobody has confirmed the right answer yet.`;
-  }
+  if (saysNow) lines.push(`*The article says today:* "${flat(truncateField(saysNow))}"`);
+  else if (title) lines.push(`*The article says today:* nothing about this. The closest article is ${title}.`);
+  else lines.push('*The article says today:* no article covers this.');
 
-  let lead;
-  if (reportingEvent.source === 'sidecar' && reportingEvent.kind === 'thumbs_down') {
-    lead = 'The rep marked the answer wrong and wrote:';
-  } else if (reportingEvent.source === 'sidecar' && SIDECAR_FLAG_KINDS.includes(reportingEvent.kind)) {
-    lead = 'The rep flagged it and wrote:';
-  } else if (reportingEvent.source === 'juju') {
-    lead = 'A product owner answered:';
-  } else {
-    lead = 'Someone answered:';
-  }
-
-  return `*What happened*\n${sentence} ${lead}\n${quote(note)}`;
+  return lines.join('\n');
 }
 
-// The loop shows what the article says today and stops there. It does not
-// draft the new wording: Claude Tag writes that in the thread, with the
-// channel's memory of what the help center writers have asked for before.
-// `should_say` and `proposed_change` are still stored on the candidate, they
-// are just not shown.
-function articleTodaySection({ title, saysNow }) {
-  let todayText;
-  if (saysNow) {
-    todayText = truncateField(saysNow);
-  } else if (title) {
-    todayText = `Nothing about this. The closest article is ${title}.`;
-  } else {
-    todayText = 'No article covers this.';
-  }
-
-  return `*The article says today*\n${quote(todayText)}`;
-}
-
-// Returns one Slack section per entry. The request gets a section of its
-// own: Slack folds a long section behind "Show more", and when the box shared
-// a section with the sentences around it, the fold landed inside the box and
-// hid the one thing a person has to copy.
-function toFixItSections({ candidate, claudeRequest }) {
-  const lowConfidence = typeof candidate.confidence === 'number' && candidate.confidence < 40;
-  const box = `\`\`\`${truncateField(claudeRequest, PASTE_REQUEST_BUDGET)}\`\`\``;
-
-  if (lowConfidence) {
+// The kind's own section(s). The confirmed card's request box is a section
+// of its own: Slack folds a long section behind "Show more", and the box is
+// the one thing a person may have to copy.
+function actionSections({ kind, claudeRequest }) {
+  if (kind === 'question') {
     return [
-      '*To fix it*\n' +
-        "This one needs a human look before anything is changed. If you know the right answer, update the article, then react :white_check_mark:. React :x: if this isn't a real gap.",
+      '*Does anyone know?*\nReply with the answer, or react :x: if it is not worth adding. Once there is an answer, reply *@Claude* with it and Claude writes it up.',
     ];
   }
-
-  if (candidate.needs_answer) {
+  if (kind === 'check') {
     return [
-      '*To fix it*\n' +
-        'Nobody has confirmed the answer yet. If you know it, reply in this thread with *@Claude* and the request below, with the answer filled in. Claude proposes the wording and opens the change once you say yes.',
-      box,
-      "React :x: if this isn't a real gap.",
+      '*Take a look*\nReact :x: if it is noise, or reply with what is wrong. If it is a real gap, reply *@Claude* and say what should change.',
     ];
   }
-
   return [
-    '*To fix it*\n' +
-      'Reply in this thread with *@Claude* and the request below. Claude reads the article, proposes the wording, and opens the change once you say yes.',
-    box,
+    '*To fix it*\nReply here with *@Claude* and say yes. Claude reads the article, proposes the wording, and opens the change once you approve. If Claude needs more, paste the request below with your reply.',
+    `\`\`\`${truncateField(claudeRequest, PASTE_REQUEST_BUDGET)}\`\`\``,
     "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.",
   ];
 }
 
-function howSureSection({ candidate, title, saysNow }) {
-  const m = (candidate.evidence?.files_read ?? []).length;
-  let ending;
-  if (saysNow) {
-    ending = ` and found that sentence in ${title}`;
-  } else if (candidate.verdict === 'MISSING') {
-    ending = '; none of them cover this';
-  } else {
-    ending = '';
-  }
-  return `*How sure is this?*\n${confidenceLabel(candidate.confidence)}. The loop read ${m} articles${ending}.`;
-}
-
 /**
- * The thread reply: the story of what happened, what the article says
- * today, how to hand the gap to Claude (three variants depending on
- * confidence and whether an answer is confirmed yet), and how sure the loop
- * is. `{ text, blocks }` ready for `replyInThread`. Every model- or
- * human-written field (the question paraphrase, the rep/owner note,
- * `says_now`, the truth summary, the request, the article title) is checked
- * with `assertNoForbiddenMentions` on its own, before any of the builder's
- * constant sentences are woven around it; the fully assembled text is
- * checked again as a backstop.
+ * The thread reply (cards v3): three lines of context (asked, the note,
+ * what the article says today), then the kind's own ask. For a confirmed
+ * card that is the "To fix it" instruction with the facts-only request as a
+ * fallback; for a question, the ask for an answer; for a check, the ask
+ * for a look. `{ text, blocks }` ready for `replyInThread`. Every model- or
+ * human-written field is checked with `assertNoForbiddenMentions` on its
+ * own before any constant sentence is woven around it; the assembled text
+ * is checked again as a backstop.
  * @param {{candidate:object, linked?:Array<object>, now?:Date}} args
  * @returns {{text:string, blocks:Array<object>}}
  */
 export function buildGapThread({ candidate, linked = [], now = new Date() }) {
   void now;
   const reportingEvent = pickReportingEvent(linked);
+  const kind = cardKind(candidate);
 
   const title = articleTitle(candidate.target_article_path);
   const hasHumanNote = reportingEvent?.truth_kind === 'human' && Boolean(reportingEvent?.truth_answer);
@@ -612,18 +556,15 @@ export function buildGapThread({ candidate, linked = [], now = new Date() }) {
     article_title: title,
   });
 
-  const claudeRequest = buildClaudeRequest({ candidate, reportingEvent, note });
-  assertFieldsClean({ claude_request: claudeRequest });
+  const claudeRequest = kind === 'confirmed' ? buildClaudeRequest({ candidate, reportingEvent, note }) : null;
+  if (claudeRequest) assertFieldsClean({ claude_request: claudeRequest });
 
   const sections = [
-    whatHappenedSection({ candidate, reportingEvent, note }),
-    articleTodaySection({ title, saysNow }),
-    ...toFixItSections({ candidate, claudeRequest }),
-    howSureSection({ candidate, title, saysNow }),
+    contextSection({ candidate, reportingEvent, note, title, saysNow }),
+    ...actionSections({ kind, claudeRequest }),
   ];
 
-  const fullPlainText = sections.join('\n\n');
-  assertNoForbiddenMentions(fullPlainText);
+  assertNoForbiddenMentions(sections.join('\n\n'));
 
   const blocks = sections.map((s) => ({ type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(s, 3000) } }));
   const text = truncateSlackText(`How to fix gap #${candidate.id}`, 4000);
