@@ -45,5 +45,8 @@ export function sampleDayInput() {
     outcomes: [],
     latestBySource: { juju: 65, sidecar: 111 },
     configuredSources: ['juju', 'sidecar'],
+    // The daily release is on in production, so the manual's sample shows
+    // the wording people actually see.
+    releaseMax: 5,
   };
 }

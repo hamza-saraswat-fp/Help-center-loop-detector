@@ -754,6 +754,59 @@ test('listByStatus: omits the since filter when no window is given', async () =>
   assert.deepEqual(calls[0].filters, [{ method: 'in', args: ['status', ['new']] }]);
 });
 
+test('listHeld: asks Postgres for held help center gaps only, newest first, without the evidence column', async () => {
+  const { client, calls } = fakeSupabase({ 'gap_candidates.select': { data: [{ id: 7 }], error: null } });
+  const repo = createCandidatesRepo({ client, now });
+
+  const rows = await repo.listHeld({ since: '2026-09-14T00:00:00.000Z' });
+
+  assert.deepEqual(rows, [{ id: 7 }]);
+  const call = calls[0];
+  assert.deepEqual(call.filters, [
+    { method: 'eq', args: ['status', 'logged'] },
+    { method: 'eq', args: ['destination', 'help_center'] },
+    { method: 'eq', args: ['evidence->>hold_reason', 'unconfirmed_single'] },
+    { method: 'gte', args: ['created_at', '2026-09-14T00:00:00.000Z'] },
+  ]);
+  assert.deepEqual(call.order, ['created_at', { ascending: false }]);
+  assert.equal(call.limit, 500);
+  assert.match(call.select, /hold_reason:evidence->>hold_reason/);
+  assert.doesNotMatch(call.select, /(^|, )evidence(,|$)/, 'the whole evidence column is never selected');
+});
+
+test('listHeld: a failed read is an empty pool, so nothing is released', async () => {
+  const { client } = fakeSupabase({ 'gap_candidates.select': { data: null, error: { message: 'boom' } } });
+  const repo = createCandidatesRepo({ client, now });
+
+  assert.deepEqual(await repo.listHeld({ since: '2026-09-14T00:00:00.000Z' }), []);
+});
+
+test('listCardsSince: every status that has a card, with when the daily release let it through', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_candidates.select': { data: [{ id: 9, released_at: '2026-09-28T14:04:00.000Z' }], error: null },
+  });
+  const repo = createCandidatesRepo({ client, now });
+
+  const rows = await repo.listCardsSince('2026-08-14T00:00:00.000Z');
+
+  assert.deepEqual(rows, [{ id: 9, released_at: '2026-09-28T14:04:00.000Z' }]);
+  const call = calls[0];
+  assert.deepEqual(call.filters, [
+    { method: 'in', args: ['status', ['new', 'posted', 'pr_open', 'adopted', 'rejected', 'merged']] },
+    { method: 'gte', args: ['created_at', '2026-08-14T00:00:00.000Z'] },
+  ]);
+  assert.match(call.select, /released_at:evidence->released->>at/);
+});
+
+test('listCardsSince: a failed read is null, never an empty list', async () => {
+  // An empty list means "nothing was released today". A failed read that
+  // looked like that would send a second batch.
+  const { client } = fakeSupabase({ 'gap_candidates.select': { data: null, error: { message: 'boom' } } });
+  const repo = createCandidatesRepo({ client, now });
+
+  assert.equal(await repo.listCardsSince('2026-08-14T00:00:00.000Z'), null);
+});
+
 test('findById: returns the candidate row, or null when it is missing', async () => {
   const { client, calls } = fakeSupabase({
     'gap_candidates.select': (call) =>

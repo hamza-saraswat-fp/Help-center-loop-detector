@@ -54,7 +54,9 @@ export function weeklyRow({ since, until, candidates = [], actions = [], runs = 
     cards_fixed: fixedIds.size,
     cards_rejected: rejectedIds.size,
     cards_waiting: waiting.length,
-    gaps_held: created.filter((c) => c.evidence?.hold_reason === 'unconfirmed_single').length,
+    // A gap the daily release let through was held first. Counting only the
+    // ones still held would shrink a past week's number every morning.
+    gaps_held: created.filter((c) => c.evidence?.hold_reason === 'unconfirmed_single' || c.evidence?.released).length,
     questions_checked: ran.reduce((n, r) => n + (Number(r.events_pulled) || 0), 0),
     cost_usd: Number(ran.reduce((n, r) => n + (Number(r.cost_usd) || 0), 0).toFixed(2)),
   };

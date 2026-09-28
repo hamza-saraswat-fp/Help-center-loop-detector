@@ -778,18 +778,19 @@ function dailyGroup(title, reason, items, extraLine = null) {
  * @returns {{text:string, blocks:Array<object>}}
  */
 export function buildDailyThread(summary) {
-  const { groups, repeats, shortcuts, cards, health, since, now } = summary;
+  const { groups, repeats, shortcuts, cards, health, since, now, releaseMax = 0 } = summary;
   const when = sinceLabel(since, now);
   const sections = [];
 
   if (groups.held.length > 0) {
-    sections.push(
-      dailyGroup(
-        'Held: real gaps, seen once, nobody confirmed',
-        "These become cards the moment someone asks again or confirms the answer. They are also in Monday's summary.",
-        groups.held,
-      ),
-    );
+    // What happens to a held gap depends on whether the daily release
+    // (src/release.js) is on, and the line must never promise cards that a
+    // loop with the release off is not going to post.
+    const heldReason =
+      releaseMax > 0
+        ? `Each weekday morning the loop posts up to ${releaseMax} of the ones it is most sure about. The rest become cards when someone asks again or confirms the answer. They are also in Monday's summary.`
+        : "These become cards the moment someone asks again or confirms the answer. They are also in Monday's summary.";
+    sections.push(dailyGroup('Held: real gaps, seen once, nobody confirmed', heldReason, groups.held));
   }
   if (groups.notAGap.length > 0 || shortcuts > 0) {
     sections.push(

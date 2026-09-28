@@ -2319,3 +2319,374 @@ test('three failed re-check updates mark the event check_failed and stop the spe
   assert.equal(event.outcome, 'check_failed');
   assert.ok(event.processed_at, 'the event is closed out rather than re-checked next run');
 });
+
+// ---------------------------------------------------------------------------
+// The daily release: a capped batch of held gaps, once each weekday.
+// ---------------------------------------------------------------------------
+
+// A Monday, 11:04 AM Central: after the daily check's hour, so a release
+// switched on mid-morning still goes out the same day.
+const RELEASE_MORNING = new Date('2026-09-28T16:04:00.000Z');
+
+function heldGap(id, overrides = {}) {
+  return {
+    id,
+    fingerprint: `fp-held-${id}`,
+    fingerprint_terms: [`term${id}`],
+    category: 'general',
+    destination: 'help_center',
+    verdict: 'NEEDS_EDIT',
+    priority: 'P3',
+    status: 'logged',
+    truth_kind: 'none',
+    needs_answer: true,
+    confidence: 75,
+    headline: `The help center does not explain topic number ${id}.`,
+    question_paraphrase: `Question number ${id}`,
+    target_article_path: `area/article-${id}.mdx`,
+    target_article_url: `https://help.fieldpulse.com/area/article-${id}`,
+    evidence: { hold_reason: 'unconfirmed_single', docs_sha: 'oldsha' },
+    event_count: 1,
+    slack_ts: null,
+    slack_channel: null,
+    first_seen: '2026-09-24T10:00:00.000Z',
+    last_seen: '2026-09-24T10:00:00.000Z',
+    created_at: '2026-09-24T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function releaseHarness({ count = 7, max = 5, candidates, ...rest } = {}) {
+  return harness({
+    now: () => RELEASE_MORNING,
+    env: { dailyReleaseMax: max },
+    seed: { candidates: candidates ?? Array.from({ length: count }, (_, i) => heldGap(i + 1)) },
+    ...rest,
+  });
+}
+
+// Cards only. RELEASE_MORNING is a Monday, so the same run also posts the
+// weekly summary and the daily check.
+function gapPosts(poster) {
+  return poster.posts.filter((p) => !/^(Daily check:|Weekly summary)/.test(p.card.text));
+}
+
+const statusesOf = (repos) => repos.state.candidates.map((c) => c.status);
+
+test('the daily release posts up to the cap as needs-answer cards and marks each one', async () => {
+  const { run, repos, poster } = releaseHarness();
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.gaps_released, 5);
+  assert.equal(stats.cards_posted, 5);
+  assert.deepEqual(statusesOf(repos).filter((s) => s === 'posted').length, 5);
+  assert.deepEqual(statusesOf(repos).filter((s) => s === 'logged').length, 2, 'the rest stay held');
+
+  const posts = gapPosts(poster);
+  assert.equal(posts.length, 5);
+  for (const post of posts) {
+    assert.equal(post.channel, 'C-GAPS');
+    assert.match(post.card.text, /needs an answer/);
+    assert.match(post.card.blocks[0].text.text, /\*Needs an answer\*/);
+  }
+
+  for (const candidate of repos.state.candidates.filter((c) => c.status === 'posted')) {
+    assert.deepEqual(candidate.evidence.released, { at: RELEASE_MORNING.toISOString(), by: 'daily_release' });
+    assert.equal(candidate.evidence.hold_reason, undefined, 'a released gap is no longer held');
+    assert.equal(candidate.evidence.docs_sha, 'oldsha', 'the rest of the evidence survives');
+    assert.ok(candidate.slack_ts, 'it has a card to react to');
+  }
+  for (const candidate of repos.state.candidates.filter((c) => c.status === 'logged')) {
+    assert.equal(candidate.evidence.hold_reason, 'unconfirmed_single');
+    assert.equal(candidate.evidence.released, undefined);
+  }
+
+  const actions = repos.state.actions.map((a) => a.action);
+  assert.equal(actions.filter((a) => a === 'owner_pinged').length, 5, 'recorded the way any needs-answer card is');
+  assert.equal(actions.filter((a) => a === 'posted').length, 0);
+});
+
+test('the daily release is off until HC_LOOP_DAILY_RELEASE_MAX is set', async () => {
+  for (const env of [{}, { dailyReleaseMax: 0 }, { dailyReleaseMax: 'five' }, { dailyReleaseMax: -3 }]) {
+    const { run, repos, poster } = harness({
+      now: () => RELEASE_MORNING,
+      env,
+      seed: { candidates: [heldGap(1), heldGap(2)] },
+    });
+
+    const { stats } = await run(args());
+
+    assert.equal(stats.gaps_released, 0, JSON.stringify(env));
+    assert.equal(gapPosts(poster).length, 0, JSON.stringify(env));
+    assert.deepEqual(statusesOf(repos), ['logged', 'logged']);
+  }
+});
+
+test('the daily release waits for a weekday morning', async () => {
+  const early = releaseHarness({ now: () => new Date('2026-09-28T13:04:00.000Z') });
+  await early.run(args());
+  assert.equal(gapPosts(early.poster).length, 0, 'before 9 AM Central');
+
+  const saturday = releaseHarness({ now: () => new Date('2026-09-26T16:04:00.000Z') });
+  await saturday.run(args());
+  assert.equal(gapPosts(saturday.poster).length, 0, 'a Saturday');
+
+  const pastMidnightUtc = releaseHarness({ now: () => new Date('2026-09-29T00:04:00.000Z') });
+  await pastMidnightUtc.run(args());
+  assert.equal(gapPosts(pastMidnightUtc.poster).length, 0, '7 PM Central is already tomorrow in UTC');
+});
+
+test('the daily release goes out once a day: the next hourly run releases nothing more', async () => {
+  let clock = RELEASE_MORNING;
+  const { run, repos, poster } = releaseHarness({ now: () => clock });
+
+  await run(args());
+  clock = new Date('2026-09-28T17:04:00.000Z');
+  const second = await run(args());
+
+  assert.equal(second.stats.gaps_released, 0);
+  assert.equal(second.stats.cards_posted, 0);
+  assert.equal(gapPosts(poster).length, 5, 'still the first batch only');
+  assert.equal(statusesOf(repos).filter((s) => s === 'logged').length, 2);
+
+  clock = new Date('2026-09-29T14:04:00.000Z');
+  const tuesday = await run(args());
+
+  assert.equal(tuesday.stats.gaps_released, 2, "the next morning's batch is what was left");
+  assert.equal(gapPosts(poster).length, 7);
+});
+
+test('the daily release does nothing in a run that cannot post', async () => {
+  const dry = releaseHarness();
+  const dryResult = await dry.run(args({ dryRun: true }));
+  assert.deepEqual(statusesOf(dry.repos), Array(7).fill('logged'), 'dry_run writes nothing');
+  assert.equal(dryResult.stats.gaps_released, 0);
+
+  // A shadow run with no shadow channel has nowhere to post. Releasing
+  // anyway would turn five gaps a day into a backlog of cards that all land
+  // at once the day a channel is configured.
+  const silent = releaseHarness({ env: { dailyReleaseMax: 5, loopMode: 'shadow', slackShadowChannelId: '' } });
+  const silentResult = await silent.run(args());
+  assert.deepEqual(statusesOf(silent.repos), Array(7).fill('logged'));
+  assert.equal(silentResult.stats.gaps_released, 0);
+});
+
+test('a failed read of the cards releases nothing, and the run carries on', async () => {
+  const { run, repos, poster } = releaseHarness();
+  repos.failNext('listCardsSince');
+
+  const { exitCode, stats } = await run(args());
+
+  assert.deepEqual(repos.pendingFailures(), [], 'the scripted failure was reached');
+  assert.equal(exitCode, 0);
+  assert.equal(stats.gaps_released, 0);
+  assert.equal(gapPosts(poster).length, 0);
+  assert.deepEqual(statusesOf(repos), Array(7).fill('logged'));
+});
+
+test('a gap that cannot be released stays held, and the rest of the batch still goes out', async () => {
+  const { run, repos, poster } = releaseHarness({ count: 5 });
+  repos.failNext('updateCandidate');
+
+  const { stats } = await run(args());
+
+  assert.deepEqual(repos.pendingFailures(), []);
+  assert.equal(stats.gaps_released, 4);
+  assert.equal(gapPosts(poster).length, 4);
+  const stuck = repos.state.candidates.filter((c) => c.status === 'logged');
+  assert.equal(stuck.length, 1);
+  assert.equal(stuck[0].evidence.hold_reason, 'unconfirmed_single', 'still held, so a later batch can pick it');
+  assert.equal(stuck[0].evidence.released, undefined);
+});
+
+test('a release that throws is recorded, not thrown, and the run still posts what it has', async () => {
+  const { run, deps, poster } = releaseHarness({
+    candidates: [heldGap(1), heldGap(2, { status: 'new', needs_answer: false, evidence: {} })],
+  });
+  deps.candidates.listHeld = async () => {
+    throw new Error('ledger down');
+  };
+
+  const { exitCode, stats } = await createRun(deps)(args());
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(stats.errors.map((e) => e.lane), ['release']);
+  assert.equal(stats.gaps_released, 0);
+  assert.equal(gapPosts(poster).length, 1, 'the card that was already waiting still posts');
+});
+
+test('the daily check in the same run counts the cards the release just posted', async () => {
+  const { run, poster } = releaseHarness({
+    now: () => new Date('2026-09-29T14:04:00.000Z'),
+    candidates: [
+      ...Array.from({ length: 5 }, (_, i) => heldGap(i + 1)),
+      // Held overnight and not sure enough to release: the one gap the
+      // daily check's thread has to explain.
+      heldGap(6, { confidence: 45, created_at: '2026-09-29T10:00:00.000Z' }),
+    ],
+  });
+
+  await run(args());
+
+  const daily = poster.posts.find((p) => /^Daily check:/.test(p.card.text));
+  assert.ok(daily, 'the daily check posted in this run');
+  assert.match(daily.card.blocks[0].text.text, /\*5\* cards posted/);
+  const details = poster.replies.find((p) => p.card.text === 'Daily check details').card.blocks.map((b) => b.text.text).join('\n');
+  assert.match(details, /Each weekday morning the loop posts up to 5 of the ones it is most sure about\./);
+});
+
+test('a released card that is asked again gets a thread reply, not a second card', async () => {
+  const row = JUJU_ROWS[1];
+  const fp = fingerprintFor(row, 'juju');
+  const { run, repos, poster } = harness({
+    now: () => RELEASE_MORNING,
+    env: { dailyReleaseMax: 5 },
+    rows: { juju: [row] },
+    seed: {
+      candidates: [
+        heldGap(1, {
+          fingerprint: fp.hash,
+          fingerprint_terms: fp.terms,
+          category: fp.category,
+          status: 'posted',
+          slack_ts: 'ts-card',
+          slack_channel: 'C-GAPS',
+          evidence: { released: { at: '2026-09-25T14:04:00.000Z', by: 'daily_release' } },
+        }),
+      ],
+    },
+  });
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.duplicates, 1);
+  assert.equal(gapPosts(poster).length, 0);
+  assert.equal(poster.replies.filter((r) => r.threadTs === 'ts-card').length, 1);
+  assert.equal(repos.state.candidates[0].status, 'posted');
+  assert.equal(repos.state.candidates[0].event_count, 2);
+});
+
+test('a re-check of a released card keeps its marker and does not mark it held again', async () => {
+  const released = { at: '2026-09-28T14:04:00.000Z', by: 'daily_release' };
+  const { run, repos, poster } = harness({
+    now: () => RELEASE_MORNING,
+    env: { dailyReleaseMax: 5 },
+    // Still no answer: the check lands on "a real gap, nobody has confirmed".
+    rows: { juju: [{ ...JUJU_ROWS[0], pinged_at: null }] },
+    script: { default: checkResult({ verdict: 'MISSING' }) },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'juju',
+          source_event_id: '5001',
+          occurred_at: JUJU_ROWS[0].occurred_at,
+          question: JUJU_ROWS[0].question,
+          truth_kind: 'none',
+          detail: {},
+          processed_at: null,
+          outcome: null,
+          candidate_id: 1,
+        },
+      ],
+      candidates: [heldGap(1, { status: 'posted', slack_ts: 'ts-card', slack_channel: 'C-GAPS', evidence: { released } })],
+    },
+  });
+
+  const { stats } = await run(args());
+
+  const candidate = repos.state.candidates[0];
+  assert.equal(candidate.verdict, 'MISSING', 'the re-check ran and wrote its result');
+  assert.equal(candidate.status, 'posted', 'a card is never walked backwards');
+  assert.deepEqual(candidate.evidence.released, released, 'the marker survives the rebuilt evidence');
+  assert.equal(candidate.evidence.hold_reason, undefined, 'a gap with a card is not held');
+  assert.equal(stats.gaps_released, 0, 'and today still counts as released');
+  assert.equal(gapPosts(poster).length, 0);
+});
+
+test('a batch Slack refused posts the next day, in place of a second batch on top of it', async () => {
+  let clock = RELEASE_MORNING;
+  let slackUp = false;
+  const { run, repos, poster } = releaseHarness({
+    count: 12,
+    now: () => clock,
+    poster: { postTs: ({ index }) => (slackUp ? `ts-${index}` : null) },
+  });
+
+  const monday = await run(args());
+
+  assert.equal(monday.stats.gaps_released, 5);
+  assert.equal(monday.stats.cards_posted, 0, 'Slack was down');
+  assert.equal(statusesOf(repos).filter((s) => s === 'new').length, 5, 'released, and still waiting for a card');
+
+  slackUp = true;
+  clock = new Date('2026-09-29T14:04:00.000Z');
+  const tuesday = await run(args());
+
+  assert.equal(tuesday.stats.gaps_released, 0, "Monday's five use up Tuesday's cap");
+  assert.equal(tuesday.stats.cards_posted, 5);
+  assert.equal(statusesOf(repos).filter((s) => s === 'posted').length, 5);
+  assert.equal(statusesOf(repos).filter((s) => s === 'logged').length, 7);
+  assert.equal(gapPosts(poster).filter((p) => p.ts).length, 5, 'five cards, not ten');
+});
+
+test('a gap held in this very run can be released in it, and is then not counted as held', async () => {
+  const { run, repos, poster } = harness({
+    now: () => RELEASE_MORNING,
+    env: { dailyReleaseMax: 5 },
+    rows: { juju: [{ ...JUJU_ROWS[0], pinged_at: null }] },
+    script: {
+      default: checkResult({
+        verdict: 'MISSING',
+        confidence: 85,
+        headline: 'The help center does not explain why a converted total differs.',
+      }),
+    },
+  });
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.candidates_new, 1);
+  assert.equal(stats.gaps_released, 1);
+  assert.equal(stats.held_unconfirmed, 0, 'held at the end of the run, not at some point during it');
+  assert.equal(repos.state.candidates[0].status, 'posted');
+  assert.equal(gapPosts(poster).length, 1);
+});
+
+test('a re-check that cannot read its candidate writes nothing and leaves the event for a later run', async () => {
+  const released = { at: '2026-09-28T14:04:00.000Z', by: 'daily_release' };
+  const { repos, deps, runCheck } = harness({
+    now: () => RELEASE_MORNING,
+    rows: { juju: [{ ...JUJU_ROWS[0], pinged_at: null }] },
+    script: { default: checkResult({ verdict: 'MISSING' }) },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'juju',
+          source_event_id: '5001',
+          occurred_at: JUJU_ROWS[0].occurred_at,
+          question: JUJU_ROWS[0].question,
+          truth_kind: 'none',
+          detail: {},
+          processed_at: null,
+          outcome: null,
+          candidate_id: 1,
+        },
+      ],
+      candidates: [heldGap(1, { status: 'posted', slack_ts: 'ts-card', slack_channel: 'C-GAPS', evidence: { released } })],
+    },
+  });
+  deps.candidates.findById = async () => null;
+
+  await createRun(deps)(args());
+
+  assert.deepEqual(runCheck.seen, ['5001']);
+  const candidate = repos.state.candidates[0];
+  assert.deepEqual(candidate.evidence, { released }, 'the evidence was not rebuilt blind');
+  assert.equal(candidate.verdict, 'NEEDS_EDIT', 'nothing was written');
+  const event = repos.state.events[0];
+  assert.equal(event.processed_at, null, 'the event is still pending a retry');
+  assert.equal(event.detail._check_attempts, 1);
+});

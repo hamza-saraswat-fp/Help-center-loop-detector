@@ -199,6 +199,15 @@ test('numeric tunables default and guard against non-finite values', () => {
   assert.equal(garbage.repullWindowDays, 14);
 });
 
+test('the daily release is off unless HC_LOOP_DAILY_RELEASE_MAX is a positive number', () => {
+  assert.equal(loadEnv(baseEnv()).dailyReleaseMax, 0, 'unset');
+  assert.equal(loadEnv(baseEnv({ HC_LOOP_DAILY_RELEASE_MAX: '' })).dailyReleaseMax, 0, 'blank, as .env.example ships it');
+  assert.equal(loadEnv(baseEnv({ HC_LOOP_DAILY_RELEASE_MAX: 'five' })).dailyReleaseMax, 0, 'a typo');
+  assert.equal(loadEnv(baseEnv({ HC_LOOP_DAILY_RELEASE_MAX: '-2' })).dailyReleaseMax, 0, 'a negative');
+  assert.equal(loadEnv(baseEnv({ HC_LOOP_DAILY_RELEASE_MAX: '5' })).dailyReleaseMax, 5);
+  assert.equal(loadEnv(baseEnv({ HC_LOOP_DAILY_RELEASE_MAX: '5.9' })).dailyReleaseMax, 5, 'a whole number of cards');
+});
+
 test('numeric tunables fall back on an explicitly blank value, not 0', () => {
   // Number('') is 0, and 0 is finite — a blank var (as .env.example ships
   // every var blank) must not silently become an explicit zero.

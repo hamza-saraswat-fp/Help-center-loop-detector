@@ -12,6 +12,9 @@ import { jaccard } from '../prefilter/fingerprint.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// A candidate in any of these has (or is about to have) a card of its own.
+const CARD_STATUSES = ['new', 'posted', 'pr_open', 'adopted', 'rejected', 'merged'];
+
 export function createCandidatesRepo({ client, now = () => new Date() }) {
   async function findByFingerprint(hash) {
     try {
@@ -179,6 +182,60 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
     }
   }
 
+  // The daily release's pool (src/release.js): gaps held for being a single
+  // unconfirmed sighting, newest first. A narrow projection for the same
+  // reason as findNearDuplicate's: `evidence` is the fattest column on the
+  // row and the picker needs one key out of it. The run re-reads the full
+  // row with `findById` before it releases anything.
+  async function listHeld({ since = null, limit = 500 } = {}) {
+    try {
+      let query = client
+        .from('gap_candidates')
+        .select(
+          'id, status, destination, verdict, confidence, headline, question_paraphrase, ' +
+            'target_article_path, category, event_count, created_at, hold_reason:evidence->>hold_reason',
+        )
+        .eq('status', 'logged')
+        .eq('destination', 'help_center')
+        .eq('evidence->>hold_reason', 'unconfirmed_single');
+      if (since) query = query.gte('created_at', since);
+
+      const { data, error } = await query.order('created_at', { ascending: false }).limit(limit);
+
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    } catch (err) {
+      logError('db', `listHeld failed: ${err.message}`);
+      return [];
+    }
+  }
+
+  // Every candidate that has, or is about to have, a card, with when the
+  // daily release let it through (null for a card that posted on its own).
+  // Unlike the other reads this returns null, not [], when it fails: the
+  // release treats an empty list as "nothing released today", and a failed
+  // read must not look like that.
+  async function listCardsSince(since, { limit = 500 } = {}) {
+    try {
+      const { data, error } = await client
+        .from('gap_candidates')
+        .select(
+          'id, status, headline, question_paraphrase, target_article_path, created_at, ' +
+            'released_at:evidence->released->>at',
+        )
+        .in('status', CARD_STATUSES)
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    } catch (err) {
+      logError('db', `listCardsSince(${since}) failed: ${err.message}`);
+      return null;
+    }
+  }
+
   async function findById(id) {
     try {
       const { data, error } = await client.from('gap_candidates').select('*').eq('id', id).maybeSingle();
@@ -220,6 +277,8 @@ export function createCandidatesRepo({ client, now = () => new Date() }) {
     linkEvent,
     updateCandidate,
     listByStatus,
+    listHeld,
+    listCardsSince,
     linkedEvents,
   };
 }
@@ -263,6 +322,14 @@ export function updateCandidate(id, patch) {
 
 export function listByStatus(statuses, opts) {
   return repo().listByStatus(statuses, opts);
+}
+
+export function listHeld(opts) {
+  return repo().listHeld(opts);
+}
+
+export function listCardsSince(since, opts) {
+  return repo().listCardsSince(since, opts);
 }
 
 export function linkedEvents(candidateId) {
