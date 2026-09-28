@@ -136,9 +136,11 @@ test('SLACK_TAG_USER_IDS csv parses and trims, default []', () => {
   assert.deepEqual(config.slackTagUserIds, ['U1', 'U2', 'U3']);
 });
 
-test('SLACK_REACTION_USER_IDS defaults to the tag list when unset', () => {
+test('SLACK_REACTION_USER_IDS stays [] (any human) when only the tag list is set', () => {
+  // Choosing who gets tagged must not decide whose reactions count.
   const config = loadEnv(baseEnv({ SLACK_TAG_USER_IDS: 'U1,U2' }));
-  assert.deepEqual(config.slackReactionUserIds, ['U1', 'U2']);
+  assert.deepEqual(config.slackTagUserIds, ['U1', 'U2']);
+  assert.deepEqual(config.slackReactionUserIds, []);
 });
 
 test('SLACK_REACTION_USER_IDS defaults to [] (any human) when both lists are unset', () => {
@@ -146,7 +148,7 @@ test('SLACK_REACTION_USER_IDS defaults to [] (any human) when both lists are uns
   assert.deepEqual(config.slackReactionUserIds, []);
 });
 
-test('SLACK_REACTION_USER_IDS overrides the tag list when explicitly set', () => {
+test('SLACK_REACTION_USER_IDS is its own list, whatever the tag list says', () => {
   const config = loadEnv(
     baseEnv({ SLACK_TAG_USER_IDS: 'U1', SLACK_REACTION_USER_IDS: 'U2, U3' })
   );

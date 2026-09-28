@@ -58,6 +58,25 @@ test('postCard never calls the client and returns null when the card has a forbi
   assert.equal(calls.length, 0);
 });
 
+test('postCard posts a card whose mention is in allowMentions', async () => {
+  const { client, calls } = fakeClient({ ts: 'ts-7' });
+  const poster = createSlackPoster({ client });
+  const card = { text: 'Seen again. cc <@U111AAA> <@U222BBB>', blocks: [] };
+  const ts = await poster.postCard('C123', card, { allowMentions: ['U111AAA', 'U222BBB'] });
+  assert.equal(ts, 'ts-7');
+  assert.equal(calls[0].text, card.text);
+});
+
+test('postCard still refuses a mention outside allowMentions, and a broadcast whatever the list', async () => {
+  const { client, calls } = fakeClient();
+  const poster = createSlackPoster({ client });
+  const other = { text: 'Seen again. cc <@U111AAA> <@U999ZZZ>', blocks: [] };
+  assert.equal(await poster.postCard('C123', other, { allowMentions: ['U111AAA'] }), null);
+  const broadcast = { text: 'Seen again. <!channel>', blocks: [] };
+  assert.equal(await poster.postCard('C123', broadcast, { allowMentions: ['U111AAA'] }), null);
+  assert.equal(calls.length, 0);
+});
+
 test('postCard returns null on timeout', async () => {
   const { client } = fakeClient({ delayMs: 50 });
   const poster = createSlackPoster({ client, timeoutMs: 5 });
@@ -69,5 +88,17 @@ test('replyInThread passes thread_ts through to postMessage', async () => {
   const { client, calls } = fakeClient();
   const poster = createSlackPoster({ client });
   await poster.replyInThread('C123', 'thread-1', CARD);
+  assert.equal(calls[0].thread_ts, 'thread-1');
+});
+
+test('replyInThread passes allowMentions through, and allows nothing without it', async () => {
+  const { client, calls } = fakeClient({ ts: 'ts-9' });
+  const poster = createSlackPoster({ client });
+  const card = { text: 'Seen again. cc <@U111AAA>', blocks: [] };
+
+  assert.equal(await poster.replyInThread('C123', 'thread-1', card), null);
+  assert.equal(calls.length, 0);
+
+  assert.equal(await poster.replyInThread('C123', 'thread-1', card, { allowMentions: ['U111AAA'] }), 'ts-9');
   assert.equal(calls[0].thread_ts, 'thread-1');
 });

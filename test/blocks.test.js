@@ -456,6 +456,66 @@ test('buildDuplicateReply: "now N times (...)" and Latest as reportedBy', () => 
   );
 });
 
+test('buildDuplicateReply: appends a tag for each id, in the text and in the block', () => {
+  const latest = sidecarEvent({ detail: { team: 'chat_assist' } });
+  const reply = buildDuplicateReply({
+    candidate: baseCandidate(),
+    linked: linkedFixture(),
+    latest,
+    now: NOW,
+    mentionUserIds: ['U0ADDI00001', 'U0ASHLI0002'],
+  });
+  const expected =
+    'Seen again: now 3 times (Juju 2, Sidecar 1). Latest: Reported by a Support rep in Sidecar · Sep 3. cc <@U0ADDI00001> <@U0ASHLI0002>';
+  assert.equal(reply.text, expected);
+  assert.equal(reply.blocks.length, 1);
+  assert.equal(reply.blocks[0].text.type, 'mrkdwn');
+  assert.equal(reply.blocks[0].text.text, expected);
+});
+
+test('buildDuplicateReply: no tag ids leaves the reply exactly as before', () => {
+  const latest = sidecarEvent({ detail: { team: 'chat_assist' } });
+  const plain = buildDuplicateReply({ candidate: baseCandidate(), linked: linkedFixture(), latest, now: NOW });
+  for (const mentionUserIds of [[], null, undefined]) {
+    const reply = buildDuplicateReply({ candidate: baseCandidate(), linked: linkedFixture(), latest, now: NOW, mentionUserIds });
+    assert.deepEqual(reply, plain);
+  }
+  assert.doesNotMatch(plain.text, /cc|<@/);
+});
+
+test('buildDuplicateReply: drops a malformed or repeated tag id and still builds', () => {
+  // A typo in Railway must cost one tag, not every reply.
+  const latest = sidecarEvent({ detail: { team: 'chat_assist' } });
+  const reply = buildDuplicateReply({
+    candidate: baseCandidate(),
+    linked: linkedFixture(),
+    latest,
+    now: NOW,
+    mentionUserIds: ['U0ADDI00001', 'addi', '<!channel>', 'u0addi00001', '', 42, 'U0ADDI00001'],
+  });
+  assert.match(reply.text, / cc <@U0ADDI00001>$/);
+
+  const none = buildDuplicateReply({ candidate: baseCandidate(), linked: linkedFixture(), latest, now: NOW, mentionUserIds: ['addi'] });
+  assert.doesNotMatch(none.text, /cc|<@/);
+});
+
+test('buildDuplicateReply: a mention inside the sentence itself still throws, even for an allowed id', () => {
+  // The team name comes from source data. The allow-list covers the tags the
+  // loop appends, never text that arrived from somewhere else.
+  const latest = sidecarEvent({ detail: { team: '<@U0ADDI00001>' } });
+  assert.throws(
+    () =>
+      buildDuplicateReply({
+        candidate: baseCandidate(),
+        linked: linkedFixture(),
+        latest,
+        now: NOW,
+        mentionUserIds: ['U0ADDI00001'],
+      }),
+    ForbiddenMentionError,
+  );
+});
+
 // --- buildWeeklySummary (unchanged copy, still covered) -----------------------
 
 test('buildWeeklySummary: lists counts and the "parent it in nav" wording', () => {
