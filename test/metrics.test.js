@@ -47,6 +47,16 @@ test('weeklyRow: one row, edits first, everything filtered to the week', () => {
   });
 });
 
+test('weeklyRow: a gap the daily release let through still counts as held for its week', () => {
+  // Otherwise a past week's number would shrink every morning, five at a time.
+  const released = {
+    id: 8,
+    created_at: '2026-09-17T10:00:00Z',
+    evidence: { released: { at: '2026-09-28T14:04:00Z', by: 'daily_release' } },
+  };
+  assert.equal(weeklyRow({ ...input, candidates: [...input.candidates, released] }).gaps_held, 2);
+});
+
 test('weeklyRow: edits are null, not zero, when GitHub could not be read', () => {
   const row = weeklyRow({ ...input, prs: null });
   assert.equal(row.hc_edits_from_cards, null);

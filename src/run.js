@@ -41,6 +41,7 @@ import {
   buildDailyThread,
 } from './slack/blocks.js';
 import { summarizeDay } from './overview.js';
+import { isReleaseDue, planRelease } from './release.js';
 import { fetchMergedPrs, countMerges } from './github/merges.js';
 
 const LANE = 'run';
@@ -71,8 +72,9 @@ const HELD_PROMOTABLE_VERDICTS = new Set(['MISSING', 'INCORRECT', 'NEEDS_EDIT'])
 
 // The `loop_runs` columns `finishRun`'s payload is allowed to touch --
 // see migrations/0001_loop_schema.sql. `stats` carries fields (`results`,
-// `held_unconfirmed`) that exist for logging and the caller's return value
-// but are not columns; sending them through would fail the update.
+// `held_unconfirmed`, `gaps_released`) that exist for logging and the
+// caller's return value but are not columns; sending them through would fail
+// the update.
 const LOOP_RUNS_COLUMNS = [
   'mode',
   'git_sha',
@@ -216,6 +218,7 @@ export function createRun({
       duplicates: 0,
       held: 0,
       held_unconfirmed: 0,
+      gaps_released: 0,
       cards_posted: 0,
       checks_failed: 0,
       cost_usd: 0,
@@ -249,6 +252,10 @@ export function createRun({
       channel = env.slackShadowChannelId || null;
       if (!channel) log(LANE, 'shadow mode with no SLACK_SHADOW_CHANNEL_ID: nothing will be posted this run');
     }
+
+    // How many held gaps the daily release may let through (src/release.js).
+    // Read defensively: 0, unset, or anything that is not a number is off.
+    const releaseMax = Math.max(0, Math.floor(Number(env.dailyReleaseMax) || 0));
 
     const runId = await runs.startRun(mode, { git_sha: gitSha });
     log(LANE, `start mode=${mode} run=${runId ?? 'unrecorded'} channel=${channel ?? 'none'}`);
@@ -633,6 +640,16 @@ export function createRun({
 
         if (recheckCandidateId) {
           const current = await candidates.findById(recheckCandidateId);
+          // The patch below rebuilds `evidence` from scratch, and what it
+          // carries over (the daily release's marker) and what it must not
+          // write (a hold on a gap that already has its card) both depend on
+          // the row as it is now. Without it this is a blind overwrite, so
+          // the event waits for a run that can read the candidate.
+          if (!current) {
+            logError(LANE, `could not read candidate #${recheckCandidateId}; leaving ${label} unprocessed`);
+            await spendCheckAttempt(event, label, 'failed candidate reads');
+            return;
+          }
           // Scored over every sighting the candidate has, exactly as the dedup
           // path does -- one answered event is not the whole history, and a
           // MISSING gap seen by a customer-facing source must not fall to P3
@@ -666,7 +683,19 @@ export function createRun({
             // simply not being in `result.evidence`) the moment it does --
             // that is what "a re-check that turns needs_answer false clears
             // hold_reason" means in practice, with no separate delete.
-            evidence: { ...result.evidence, trace, ...(holdReason ? { hold_reason: holdReason } : {}) },
+            //
+            // Two things survive the rebuild. `released` is the daily
+            // release's marker (src/release.js), which is what stops a second
+            // batch going out the same day. And `hold_reason` is only ever
+            // written onto a candidate that is still waiting: a released gap
+            // whose event is checked again with no answer already has its
+            // card, and must not be marked held underneath it.
+            evidence: {
+              ...result.evidence,
+              trace,
+              ...(current.evidence?.released ? { released: current.evidence.released } : {}),
+              ...(holdReason && current.status === 'logged' ? { hold_reason: holdReason } : {}),
+            },
             // No `last_seen`: this is an event the candidate already counted,
             // and writing its occurred_at back would drag the timestamp
             // backwards past later sightings.
@@ -676,7 +705,7 @@ export function createRun({
           // `event_count` -- this is the same event, not another sighting.
           // `fingerprint` is left alone too: the answer changes the terms, and
           // rewriting a unique key mid-life can only collide.
-          if (current?.status === 'logged' && status === 'new') patch.status = 'new';
+          if (current.status === 'logged' && status === 'new') patch.status = 'new';
 
           const updated = await candidates.updateCandidate(recheckCandidateId, patch);
           if (!updated) {
@@ -685,7 +714,7 @@ export function createRun({
             return;
           }
           await events.markProcessed(event.id, 'candidate', { candidateId: recheckCandidateId });
-          log(LANE, `candidate #${recheckCandidateId} re-checked ${result.verdict} ${patch.status ?? current?.status} from ${label}`);
+          log(LANE, `candidate #${recheckCandidateId} re-checked ${result.verdict} ${patch.status ?? current.status} from ${label}`);
           return;
         }
 
@@ -758,6 +787,56 @@ export function createRun({
         });
       }
 
+
+      // --- daily release ---------------------------------------------------
+      // A held gap waits for a second sighting that, for most questions,
+      // never comes. So once each weekday the loop lets the few it is most
+      // sure about through as needs-answer cards (src/release.js picks
+      // them). Ahead of the posting loop on purpose: a released gap is just a
+      // candidate with status 'new', and posts below in this same run. Gated
+      // exactly like posting -- a run that cannot post must not use up the
+      // pool -- and guarded like the daily check: releasing more is never
+      // worth failing the run that does everything else.
+      if (!dryRun && channel && releaseMax > 0 && isReleaseDue(startedAt)) {
+        try {
+          const plan = await planRelease({ candidates, now: startedAt, max: releaseMax });
+          if (plan.skipped) {
+            log(LANE, `daily release skipped: ${plan.skipped}`);
+          } else if (plan.unposted > 0) {
+            log(LANE, `daily release: ${plan.unposted} released earlier still have no card; they count against today's ${releaseMax}`);
+          }
+          for (const pick of plan.picks) {
+            // The full row, for two reasons: the pick is a narrow projection
+            // with no `evidence` to write back, and a second sighting earlier
+            // in this same run may already have promoted it.
+            const full = await candidates.findById(pick.id);
+            if (full?.status !== 'logged' || full.evidence?.hold_reason !== HOLD_REASON_UNCONFIRMED) {
+              log(LANE, `daily release: candidate #${pick.id} is no longer held; skipping it`);
+              continue;
+            }
+            const evidence = {
+              ...(full.evidence ?? {}),
+              released: { at: startedAt.toISOString(), by: 'daily_release' },
+            };
+            delete evidence.hold_reason;
+            const updated = await candidates.updateCandidate(pick.id, { status: 'new', evidence });
+            if (!updated) {
+              logError(LANE, `daily release: could not release candidate #${pick.id}; it stays held`);
+              continue;
+            }
+            stats.gaps_released += 1;
+            if (heldThisRun.has(pick.id)) {
+              stats.held_unconfirmed -= 1;
+              heldThisRun.delete(pick.id);
+            }
+            log(LANE, `candidate #${pick.id} released from a held single: confidence ${pick.confidence}`);
+          }
+          if (!plan.skipped) log(LANE, `daily release: ${stats.gaps_released} of ${plan.pool} held gaps released`);
+        } catch (err) {
+          stats.errors.push({ lane: 'release', message: messageOf(err) });
+          logError(LANE, `daily release failed: ${messageOf(err)}`);
+        }
+      }
 
       // --- post -----------------------------------------------------------
       if (!dryRun && channel) {
@@ -931,6 +1010,7 @@ export function createRun({
                 outcomes,
                 latestBySource: stats.events_by_source,
                 configuredSources: Object.keys(env.sources ?? {}).filter((source) => env.sources[source]),
+                releaseMax,
               });
               return { post: buildDailyPost(summary), thread: buildDailyThread(summary) };
             }, 'the daily check');

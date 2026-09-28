@@ -42,6 +42,7 @@ export function groupOf(candidate) {
  *   outcomes?: Array<object>,        gap_actions rows since `since` (adopted, merged, rejected)
  *   latestBySource?: object,         this run's events_by_source
  *   configuredSources?: string[],    sources that have a connection string
+ *   releaseMax?: number,             held gaps the daily release lets through a day; 0 is off
  * }} input
  */
 export function summarizeDay({
@@ -54,6 +55,7 @@ export function summarizeDay({
   outcomes = [],
   latestBySource = {},
   configuredSources = [],
+  releaseMax = 0,
 }) {
   const sinceDate = since instanceof Date ? since : new Date(since);
 
@@ -109,6 +111,9 @@ export function summarizeDay({
     // candidate at all.
     notForHelpCenter: groups.notAGap.length + groups.unfindable.length + groups.internal.length + shortcuts,
     shortcuts,
+    // So the thread can say what actually happens to a held gap: with the
+    // daily release on, waiting for a second sighting is not the only way out.
+    releaseMax,
     cards: {
       waiting: waiting.length,
       oldestWaiting: oldestWaiting

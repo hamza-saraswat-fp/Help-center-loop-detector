@@ -701,10 +701,16 @@ test('buildDailyPost: a warning replaces the running-normally line', () => {
   );
 });
 
+test('buildDailyThread: with the daily release off, the held line promises no morning cards', () => {
+  const texts = buildDailyThread(daySummary({ releaseMax: 0 })).blocks.map((b) => b.text.text);
+  assert.match(texts[0], /^\*Held: real gaps, seen once, nobody confirmed \(2\)\*\nThese become cards the moment someone asks again or confirms the answer\. They are also in Monday's summary\.\n• #183 /);
+  assert.doesNotMatch(texts[0], /Each weekday morning/);
+});
+
 test('buildDailyThread: every group with its reason, then cards, then under the hood', () => {
   const texts = buildDailyThread(daySummary()).blocks.map((b) => b.text.text);
   assert.equal(texts.length, 7);
-  assert.match(texts[0], /^\*Held: real gaps, seen once, nobody confirmed \(2\)\*\nThese become cards the moment someone asks again or confirms the answer\. They are also in Monday's summary\.\n• #183 /);
+  assert.match(texts[0], /^\*Held: real gaps, seen once, nobody confirmed \(2\)\*\nEach weekday morning the loop posts up to 5 of the ones it is most sure about\. The rest become cards when someone asks again or confirms the answer\. They are also in Monday's summary\.\n• #183 /);
   assert.match(texts[0], /• #183 The article does not say whether timesheets survive a user being deactivated\. · Employee Timesheets/);
   assert.equal(texts[1], "*Not a gap (1)*\nThe help center already answers these, or the question is about one account's own data.\n• #192 Can the daily or weekly work log report include job notes");
   assert.equal(texts[2], '*Already covered, but the tools could not find it (1)*\nA search problem, not a writing problem.\n• #202 Can you make a tech support request · Reach Support');

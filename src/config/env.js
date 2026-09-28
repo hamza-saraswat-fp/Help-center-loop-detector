@@ -128,6 +128,11 @@ export function loadEnv(envObject) {
   // Keeps the launch backlog to the window we actually want to work.
   const sinceFloor = (envObject.HC_LOOP_SINCE_FLOOR || '').trim() || null;
 
+  // How many held gaps the loop releases as needs-answer cards each weekday
+  // morning (src/release.js). 0, the default, is off: a held gap then only
+  // posts once it is seen again or someone confirms the answer.
+  const dailyReleaseMax = Math.max(0, Math.floor(parseNumber(envObject.HC_LOOP_DAILY_RELEASE_MAX, 0)));
+
   // Option B seam: whether the run may open preview PRs against the docs
   // repo. Off by default; src/github/preview.js throws PreviewPrDisabled
   // when this is false.
@@ -167,6 +172,7 @@ export function loadEnv(envObject) {
     maxChecksPerRun,
     repullWindowDays,
     sinceFloor,
+    dailyReleaseMax,
     hcLoopOpenPrs,
   };
 
@@ -221,6 +227,7 @@ export const githubToken = resolved?.githubToken ?? '';
 export const maxChecksPerRun = resolved?.maxChecksPerRun ?? 40;
 export const repullWindowDays = resolved?.repullWindowDays ?? 14;
 export const sinceFloor = resolved?.sinceFloor ?? null;
+export const dailyReleaseMax = resolved?.dailyReleaseMax ?? 0;
 export const hcLoopOpenPrs = resolved?.hcLoopOpenPrs ?? false;
 
 export function isSourceConfigured(source) {

@@ -90,6 +90,16 @@ test('summarizeDay: sorts a day into groups and counts what is not for the help 
   assert.equal(summary.notForHelpCenter, 4);
 });
 
+test('summarizeDay: carries the daily release cap through, 0 when the release is off', () => {
+  assert.equal(summarizeDay(healthy()).releaseMax, 0);
+  assert.equal(summarizeDay(healthy({ releaseMax: 5 })).releaseMax, 5);
+});
+
+test('groupOf: a gap the daily release let through is a card, not a held gap', () => {
+  const released = candidate({ status: 'posted', evidence: { released: { at: '2026-09-22T14:04:00.000Z', by: 'daily_release' } } });
+  assert.equal(groupOf(released), 'cards');
+});
+
 test('summarizeDay: cards posted, cost and failed checks are summed over the window', () => {
   const runs = healthyRuns();
   runs[3].cards_posted = 2;

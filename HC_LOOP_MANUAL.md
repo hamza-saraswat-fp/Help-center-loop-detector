@@ -148,10 +148,35 @@ channel's instructions in the Claude Tag settings say so). Or make the
 edit yourself and react :white_check_mark:.
 
 A gap with a human-confirmed answer still posts immediately, exactly as
-above. A gap nobody has confirmed an answer for only posts once it has been
-seen twice; the first sighting is logged with `evidence.hold_reason:
-'unconfirmed_single'` and shows up in the weekly summary's "Seen once, not
-confirmed" list instead of a card.
+above. A gap nobody has confirmed an answer for is held on its first
+sighting: it is logged with `evidence.hold_reason: 'unconfirmed_single'`
+and shows up in the weekly summary's "Seen once, not confirmed" list
+instead of a card. It posts at once if it is seen again.
+
+**The daily release.** Waiting for a second sighting is not enough on its
+own. Support questions are long-tail, so most real gaps are asked once: on
+2026-09-28 the loop was holding 189 of them and had promoted four. So each
+weekday, on the first run at or after 14:00 UTC (9 AM Central), the loop
+also releases up to `HC_LOOP_DAILY_RELEASE_MAX` held gaps as ordinary
+needs-answer cards. Unset or `0` is off. `pickReleases` in
+`src/release.js` chooses them:
+
+- **Eligible**: held in the last 14 days, confidence 70 or higher, with a
+  headline and an article, and not a reworded copy of a card from the last
+  45 days (so a rejected card's twin does not come back the next morning).
+- **Ranked**: a gap somebody else also asked in other words first, then
+  confidence, then how many open questions its article has, then newest.
+- **One card per article per batch**, and one batch a day. A batch that
+  comes up short is not topped up. A released gap whose card never went
+  out (Slack was down) is still waiting to post, and counts against the
+  next batch's cap, so an outage does not end with several batches landing
+  at once.
+
+A released gap has `evidence.released` (`at`, `by: 'daily_release'`) in
+place of `hold_reason`, and is a normal card from then on. Gaps that are
+not released stay held and stay in the Monday list. To see what the next
+batch would be without changing anything:
+`node scripts/preview-release.js --max=5`.
 
 ## Where a correction goes
 
@@ -224,6 +249,12 @@ An unrecognized value on either ladder (a typo, an old value left over from
 testing) falls back to the row above it, `dry_run` and `off`. That is the
 inert rung on purpose: a broken env var should make the loop do less, never
 more.
+
+**`HC_LOOP_DAILY_RELEASE_MAX`** is a number, not a ladder, and follows the
+same rule: how many held gaps the daily release posts each weekday (see
+Routing). Unset, `0`, or anything that is not a number is off. It only acts
+in a run that can post, so it does nothing in `dry_run` or in a `shadow`
+run with no shadow channel.
 
 ## The check, in plain words
 
@@ -322,7 +353,8 @@ a fifth list of what was rejected:
 
 - **Seen once, not confirmed**: a gap nobody has confirmed an answer for
   yet, held rather than posted after its first sighting (see Routing
-  above). It lists first, since it's usually the largest bucket.
+  above). It lists first, since it's usually the largest bucket. A gap the
+  daily release has let through is a card, so it is no longer listed here.
 - **`UNFINDABLE`**: content that already exists and is correct, but search
   couldn't surface it.
 - **`HIDDEN`**: content that exists but is hidden from every tool, listed
@@ -346,11 +378,11 @@ loop posts one short "Daily check" in the gaps channel, with the details as
 a reply in its thread. It covers everything since the previous daily check,
 so Monday's covers the weekend. It never posts in `dry_run`.
 
-It exists because cards alone cannot tell you the loop is working. Most days
-the posting rule (see Routing) holds every new gap, since a gap only a tool
-flagged waits for a second sighting. A day like that, twenty questions
-checked and eleven real gaps held, looks from Slack exactly like a day the
-loop was down. The daily check shows both halves: what the loop looked at
+It exists because cards alone cannot tell you the loop is working. The
+posting rule (see Routing) holds most new gaps, since a gap only a tool
+flagged waits for a second sighting or for the daily release. A day of
+twenty questions checked and eleven real gaps held looks, from the cards
+alone, a lot like a day the loop was down. The daily check shows both halves: what the loop looked at
 and where each question went, and whether the hourly runs and both sources
 showed up.
 
@@ -367,7 +399,7 @@ Its thread reply:
 
 ```
 *Held: real gaps, seen once, nobody confirmed (2)*
-These become cards the moment someone asks again or confirms the answer. They are also in Monday's summary.
+Each weekday morning the loop posts up to 5 of the ones it is most sure about. The rest become cards when someone asks again or confirms the answer. They are also in Monday's summary.
 • #183 The article does not say whether timesheets survive a user being deactivated. · Employee Timesheets
 • #186 Reps ask whether the invoice title is included in the export. The article does not say. · Exporting Estimates Invoices
 
@@ -400,9 +432,9 @@ for word.
 
 Reading it:
 
-- **The counts.** "Cards posted" is what reached the channel. "Real gaps
-  held" are help center gaps waiting for a second sighting or a confirmed
-  answer. "Not for the help center" is everything else: not a gap, already
+- **The counts.** "Cards posted" is what reached the channel, the daily
+  release's cards included. "Real gaps held" are help center gaps waiting
+  for the daily release, a second sighting or a confirmed answer. "Not for the help center" is everything else: not a gap, already
   covered, internal, and account lookups skipped without a check. "Asked
   again" are repeats of a question the loop already has.
 - **Each group in the thread gives its reason once, for the group.** The loop
@@ -460,7 +492,9 @@ new -----> posted -----> adopted
 ```
 
 - **`new`**: a candidate was just created (or promoted from `logged`, see
-  below) and is waiting for its card to be posted.
+  below) and is waiting for its card to be posted. A held gap gets here
+  three ways: it is seen again, a re-check brings a confirmed answer, or
+  the daily release picks it.
 - **`logged`**: a candidate that never gets a card of its own, `NOT_A_GAP`,
   `UNFINDABLE`, `HIDDEN`, a shortcut ("data lookup"), or anything not
   destined for the help center. Recorded for the weekly summary and for

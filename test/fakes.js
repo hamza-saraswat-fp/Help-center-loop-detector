@@ -168,9 +168,10 @@ export function fakeSupabase(script = {}) {
  * and prs.js's `if (!row) continue` -- are only reachable if the fakes can
  * fail too, so `failNext(method, times = 1)` scripts the next `times` calls of
  * `method` to return null without writing anything. `insertCandidate`,
- * `recordAction`, `mergeEventIntoCandidate` and `updateCandidate` are the ones
- * wired up. `pendingFailures()` returns the scripted failures that were never
- * consumed, so a test can prove the path it meant to exercise was reached.
+ * `recordAction`, `mergeEventIntoCandidate`, `updateCandidate` and
+ * `listCardsSince` are the ones wired up. `pendingFailures()` returns the
+ * scripted failures that were never consumed, so a test can prove the path it
+ * meant to exercise was reached.
  * @param {{now?: () => Date, seed?: {events?: object[], candidates?: object[], runs?: object[]}}} [opts]
  */
 // Mirrors the `select(...)` in src/db/candidates.js's findNearDuplicate --
@@ -193,6 +194,24 @@ const NEAR_DUPLICATE_COLUMNS = [
   'question_paraphrase',
   'destination',
 ];
+
+// Mirror the `select(...)`s in src/db/candidates.js's listHeld and
+// listCardsSince, again without `evidence`.
+const HELD_COLUMNS = [
+  'id',
+  'status',
+  'destination',
+  'verdict',
+  'confidence',
+  'headline',
+  'question_paraphrase',
+  'target_article_path',
+  'category',
+  'event_count',
+  'created_at',
+];
+const CARD_COLUMNS = ['id', 'status', 'headline', 'question_paraphrase', 'target_article_path', 'created_at'];
+const CARD_STATUSES = ['new', 'posted', 'pr_open', 'adopted', 'rejected', 'merged'];
 
 // Mirrors the `select(...)` in src/db/candidates.js's linkedEvents. Kept
 // narrow on purpose: a builder that reaches for a column outside this list
@@ -394,6 +413,34 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
         .sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || a.id - b.id)
         .slice(0, limit)
         .map((c) => ({ ...c }));
+    },
+    // Same projections as the real repo's listHeld / listCardsSince: the
+    // json arrow aliases are computed from `evidence`, which is never
+    // exposed whole. `failNext('listCardsSince')` makes the read fail the
+    // way the real one does, with null.
+    async listHeld({ since = null, limit = 500 } = {}) {
+      return state.candidates
+        .filter((c) => c.status === 'logged' && c.destination === 'help_center')
+        .filter((c) => c.evidence?.hold_reason === 'unconfirmed_single')
+        .filter((c) => !since || new Date(c.created_at) >= new Date(since))
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id)
+        .slice(0, limit)
+        .map((c) => ({
+          ...Object.fromEntries(HELD_COLUMNS.filter((column) => column in c).map((column) => [column, c[column]])),
+          hold_reason: c.evidence?.hold_reason ?? null,
+        }));
+    },
+    async listCardsSince(since, { limit = 500 } = {}) {
+      if (scriptedToFail('listCardsSince')) return null;
+      return state.candidates
+        .filter((c) => CARD_STATUSES.includes(c.status))
+        .filter((c) => new Date(c.created_at) >= new Date(since))
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id)
+        .slice(0, limit)
+        .map((c) => ({
+          ...Object.fromEntries(CARD_COLUMNS.filter((column) => column in c).map((column) => [column, c[column]])),
+          released_at: c.evidence?.released?.at ?? null,
+        }));
     },
     async linkedEvents(candidateId) {
       return state.events
