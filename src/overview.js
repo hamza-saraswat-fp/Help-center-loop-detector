@@ -65,6 +65,9 @@ export function summarizeDay({
   const byOutcome = eventCounts.byOutcome ?? {};
   const repeats = byOutcome.duplicate ?? 0;
   const shortcuts = byOutcome.shortcut_none ?? 0;
+  // Set aside as a placeholder (src/prefilter/placeholder.js): the loop has
+  // not looked at these yet, because there is nothing to look at yet.
+  const noQuestion = byOutcome.no_question ?? 0;
 
   // --- health ------------------------------------------------------------
   // One run an hour. `runs` includes the run that is posting this, which has
@@ -99,7 +102,9 @@ export function summarizeDay({
     // candidate in a window where its event was counted earlier, and a post
     // that says "no new questions" above a list of held gaps is worse than
     // one that is off by a question.
-    questions: Math.max(eventCounts.total ?? 0, candidates.length + repeats + shortcuts),
+    // And never counting a question the loop has only set aside: "looked at"
+    // has to mean looked at.
+    questions: Math.max((eventCounts.total ?? 0) - noQuestion, candidates.length + repeats + shortcuts),
     sources: Object.keys(eventCounts.bySource ?? {})
       .sort((a, b) => (eventCounts.bySource[b] ?? 0) - (eventCounts.bySource[a] ?? 0))
       .map((source) => SOURCE_NAMES[source] ?? source),
@@ -111,6 +116,7 @@ export function summarizeDay({
     // candidate at all.
     notForHelpCenter: groups.notAGap.length + groups.unfindable.length + groups.internal.length + shortcuts,
     shortcuts,
+    noQuestion,
     // So the thread can say what actually happens to a held gap: with the
     // daily release on, waiting for a second sighting is not the only way out.
     releaseMax,

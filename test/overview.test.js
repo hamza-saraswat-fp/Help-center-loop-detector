@@ -90,6 +90,21 @@ test('summarizeDay: sorts a day into groups and counts what is not for the help 
   assert.equal(summary.notForHelpCenter, 4);
 });
 
+test('summarizeDay: questions set aside as placeholders are counted apart from questions looked at', () => {
+  const summary = summarizeDay(
+    healthy({
+      candidates: [candidate({ id: 1, evidence: { hold_reason: 'unconfirmed_single' } })],
+      eventCounts: { total: 5, byOutcome: { candidate: 1, duplicate: 1, no_question: 3 }, bySource: { sidecar: 5 } },
+    }),
+  );
+
+  assert.equal(summary.noQuestion, 3);
+  assert.equal(summary.questions, 2, 'looked at has to mean looked at');
+  assert.equal(summary.repeats, 1);
+  assert.equal(summary.notForHelpCenter, 0, 'a question nobody has looked at yet is not "not for the help center"');
+  assert.equal(summarizeDay(healthy()).noQuestion, 0);
+});
+
 test('summarizeDay: carries the daily release cap through, 0 when the release is off', () => {
   assert.equal(summarizeDay(healthy()).releaseMax, 0);
   assert.equal(summarizeDay(healthy({ releaseMax: 5 })).releaseMax, 5);

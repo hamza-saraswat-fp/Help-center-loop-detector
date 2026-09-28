@@ -76,6 +76,19 @@ test('0008 makes one row per Slack message, so re-reading a thread is a no-op', 
   );
 });
 
+// --- 0010: placeholder questions -------------------------------------------------
+
+test("0010 admits 'no_question' without dropping any outcome 0001 allowed", () => {
+  const outcomeSql = readFileSync(new URL('../migrations/0010_no_question_outcome.sql', import.meta.url), 'utf8');
+  const original = sql.match(/check \(outcome in \(([^)]+)\)\)/)[1].split(',').map((v) => v.trim());
+  const widened = outcomeSql.match(/check \(outcome in \(([^)]+)\)\)/)[1].split(',').map((v) => v.trim());
+  assert.deepEqual(widened, [...original, "'no_question'"]);
+  // The drop names the constraint outright, so a wrong name fails loudly
+  // instead of leaving the old constraint in place beside the new one.
+  assert.match(outcomeSql, /alter table gap_events drop constraint gap_events_outcome_check;/);
+  assert.doesNotMatch(outcomeSql, /drop constraint if exists/);
+});
+
 // --- 0009: the daily check marker ------------------------------------------------
 
 test('0009 adds loop_runs.overview_posted, additive and defaulting to false', () => {

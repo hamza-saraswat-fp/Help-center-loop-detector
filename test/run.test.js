@@ -2828,3 +2828,219 @@ test('a same-conversation repeat still promotes a held gap: only the reply chang
   assert.equal(h.repos.state.candidates[0].status, 'posted', 'promoted and posted, as before');
   assert.equal(h.poster.posts.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// Placeholder questions: set aside until the real text arrives.
+// ---------------------------------------------------------------------------
+
+const PLACEHOLDER = 'How should I respond to this?';
+const SUMMARY =
+  '**Summary:** The user asked how to add a custom shortcut button for photos directly to a job screen. ' +
+  'The assistant found no documentation covering it.';
+
+function quickAction(overrides = {}) {
+  return { ...SIDECAR_ROWS[1], event_id: 9901, question: PLACEHOLDER, ...overrides };
+}
+
+// Gap #65 as it stood: the first quick-action click, judged "not a gap", and
+// fingerprinted to the two words every later click also reduced to.
+function gap65() {
+  const fp = fingerprintFor(quickAction(), 'sidecar');
+  return {
+    id: 65,
+    fingerprint: fp.hash,
+    fingerprint_terms: fp.terms,
+    category: fp.category,
+    destination: 'none',
+    verdict: 'NOT_A_GAP',
+    priority: null,
+    status: 'logged',
+    question_paraphrase: 'How should I respond to this message or inquiry',
+    needs_answer: true,
+    evidence: {},
+    event_count: 1,
+    first_seen: '2026-09-01T00:00:00.000Z',
+    last_seen: '2026-09-01T00:00:00.000Z',
+    created_at: '2026-09-01T00:00:00.000Z',
+  };
+}
+
+test('a placeholder question is set aside: no check, no candidate, and no match against anything', async () => {
+  const { run, repos, poster, runCheck } = harness({
+    rows: { sidecar: [quickAction()] },
+    seed: { candidates: [gap65()] },
+  });
+
+  const { stats } = await run(args());
+
+  assert.deepEqual(runCheck.seen, [], 'nothing to check yet');
+  assert.equal(stats.no_question, 1);
+  assert.equal(stats.duplicates, 0, 'and it is not a repeat of the last placeholder');
+  assert.equal(stats.candidates_new, 0);
+  assert.equal(repos.state.candidates.length, 1);
+  assert.equal(repos.state.candidates[0].event_count, 1, 'gap #65 absorbs nothing');
+  assert.deepEqual(repos.state.links, []);
+  assert.equal(poster.posts.length, 0);
+
+  const event = repos.state.events[0];
+  assert.equal(event.outcome, 'no_question');
+  assert.ok(event.processed_at, 'out of the queue, so it cannot use up a check every hour');
+  assert.equal(event.candidate_id, null);
+});
+
+test('an event that was set aside is checked once the real question arrives', async () => {
+  let text = PLACEHOLDER;
+  const { run, repos, runCheck } = harness({
+    rows: { sidecar: () => [quickAction({ question: text })] },
+    script: { default: checkResult({ verdict: 'MISSING' }) },
+    seed: { candidates: [gap65()] },
+  });
+
+  await run(args());
+  const again = await run(args());
+  assert.equal(again.stats.no_question, 0, 'still a placeholder: it stays set aside and is not looked at again');
+  assert.deepEqual(runCheck.seen, []);
+
+  text = SUMMARY;
+  const { stats } = await run(args());
+
+  assert.deepEqual(runCheck.seen, ['9901'], 'checked, once, on the real text');
+  assert.equal(stats.candidates_new, 1);
+  assert.equal(stats.duplicates, 0);
+  const event = repos.state.events[0];
+  assert.equal(event.question, SUMMARY);
+  assert.equal(event.outcome, 'candidate');
+  const created = repos.state.candidates.find((c) => c.id !== 65);
+  assert.equal(event.candidate_id, created.id);
+  assert.equal(created.verdict, 'MISSING');
+  assert.equal(repos.state.candidates.find((c) => c.id === 65).event_count, 1);
+});
+
+test('a thumbs-down on a placeholder waits for the question too, note and all', async () => {
+  // The rep's note made the fingerprint unique, so these were checked, but
+  // against "How should I respond to this?" rather than the question.
+  const row = quickAction({ kind: 'thumbs_down', truth_kind: 'human', truth_answer: 'Related Feature should be Reporting.' });
+  const { run, repos, runCheck } = harness({ rows: { sidecar: [row] } });
+
+  const { stats } = await run(args());
+
+  assert.deepEqual(runCheck.seen, []);
+  assert.equal(stats.no_question, 1);
+  assert.equal(repos.state.candidates.length, 0);
+  assert.equal(repos.state.events[0].outcome, 'no_question');
+});
+
+test('an event with a candidate keeps it while set aside, and re-checks in place when its text arrives', async () => {
+  let text = PLACEHOLDER;
+  const { run, repos, runCheck } = harness({
+    rows: { sidecar: () => [quickAction({ question: text })] },
+    script: { default: checkResult({ verdict: 'NEEDS_EDIT', question_paraphrase: 'How to add a photo shortcut to a job' }) },
+    seed: {
+      // Gap #316: created from a placeholder, then set aside by the clean-up.
+      events: [
+        {
+          id: 1,
+          source: 'sidecar',
+          source_event_id: '9901',
+          kind: 'model_detected',
+          occurred_at: SIDECAR_ROWS[1].occurred_at,
+          question: PLACEHOLDER,
+          truth_kind: 'none',
+          detail: {},
+          processed_at: '2026-09-15T00:00:00.000Z',
+          outcome: 'no_question',
+          candidate_id: 316,
+        },
+      ],
+      candidates: [{ ...gap65(), id: 316, fingerprint: 'fp-316', fingerprint_terms: ['respond', 'should', 'company'] }],
+    },
+  });
+
+  await run(args());
+  assert.deepEqual(runCheck.seen, [], 'nothing arrives, nothing happens');
+  assert.equal(repos.state.events[0].candidate_id, 316);
+
+  text = SUMMARY;
+  const { stats } = await run(args());
+
+  assert.deepEqual(runCheck.seen, ['9901']);
+  assert.equal(stats.candidates_new, 0, 'no second candidate for the same event');
+  assert.equal(repos.state.candidates.length, 1);
+  assert.equal(repos.state.candidates[0].verdict, 'NEEDS_EDIT');
+  assert.equal(repos.state.candidates[0].question_paraphrase, 'How to add a photo shortcut to a job');
+  assert.equal(repos.state.events[0].outcome, 'candidate');
+  assert.equal(repos.state.events[0].candidate_id, 316);
+});
+
+test('an event re-opened while still a placeholder is set aside again without losing its candidate', async () => {
+  // The rep's answer arrived before the summary did.
+  const row = quickAction({ kind: 'thumbs_down', truth_kind: 'human', truth_answer: 'It is under Company Settings.' });
+  const { run, repos, runCheck } = harness({
+    rows: { sidecar: [row] },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: 'sidecar',
+          source_event_id: '9901',
+          kind: 'model_detected',
+          occurred_at: SIDECAR_ROWS[1].occurred_at,
+          question: PLACEHOLDER,
+          truth_kind: 'none',
+          detail: {},
+          processed_at: '2026-09-15T00:00:00.000Z',
+          outcome: 'no_question',
+          candidate_id: 316,
+        },
+      ],
+      candidates: [{ ...gap65(), id: 316, fingerprint: 'fp-316' }],
+    },
+  });
+
+  await run(args());
+
+  assert.deepEqual(runCheck.seen, []);
+  assert.equal(repos.state.events[0].outcome, 'no_question');
+  assert.equal(repos.state.events[0].candidate_id, 316);
+});
+
+test('dry_run reports a placeholder and writes nothing', async (t) => {
+  const logSpy = t.mock.method(console, 'log');
+  const { run, repos, runCheck } = harness({ rows: { sidecar: [quickAction()] } });
+
+  const { stats } = await run(args({ dryRun: true }));
+
+  assert.deepEqual(runCheck.seen, []);
+  assert.equal(stats.no_question, 1);
+  assert.deepEqual(stats.results, []);
+  assert.equal(repos.state.events.length, 0);
+  const lines = logSpy.mock.calls.map((call) => call.arguments[0]);
+  assert.ok(lines.some((line) => typeof line === 'string' && line.includes('dry-run no question yet:')));
+});
+
+test('a short real question is still checked: only placeholders are set aside', async () => {
+  const { run, runCheck, repos } = harness({
+    rows: { sidecar: [quickAction({ question: 'Android' })] },
+    script: { default: checkResult({ verdict: 'NEEDS_EDIT' }) },
+  });
+
+  const { stats } = await run(args());
+
+  assert.deepEqual(runCheck.seen, ['9901']);
+  assert.equal(stats.no_question, 0);
+  assert.equal(repos.state.candidates.length, 1);
+});
+
+test('the daily check says how many questions are waiting for their text', async () => {
+  const { run, poster } = harness({
+    now: () => new Date('2026-09-29T14:04:00.000Z'),
+    rows: { sidecar: [quickAction(), quickAction({ event_id: 9902 })] },
+  });
+
+  await run(args());
+
+  const details = poster.replies.find((p) => p.card.text === 'Daily check details').card.blocks.map((b) => b.text.text).join('\n');
+  assert.match(details, /\*Waiting for the real question \(2\)\*/);
+  const post = poster.posts.find((p) => /^Daily check:/.test(p.card.text));
+  assert.match(post.card.blocks[0].text.text, /No new questions came in/, 'set aside is not looked at');
+});
