@@ -193,6 +193,46 @@ not released stay held and stay in the Monday list. To see what the next
 batch would be without changing anything:
 `node scripts/preview-release.js --max=5`.
 
+## Questions with no text yet
+
+A quick-action click in Sidecar is stored as the button's own words, "How
+should I respond to this?" or "Draft the case wrap-up", because the
+conversation the rep pasted is not kept. Sidecar's view replaces that with
+a summary of the conversation, but the summary is written hours after the
+event first appears, and the loop pulls every hour. So the loop sees the
+placeholder first.
+
+Treated as a question, the placeholder reduces to two words ("respond",
+"should"). That made every quick-action click a repeat of the first one:
+by 2026-09-28, 33 unrelated questions had been filed under one not-a-gap
+candidate (#65) and never checked.
+
+What the loop does now (`src/prefilter/placeholder.js`):
+
+- **A placeholder is set aside.** It is marked processed with outcome
+  `no_question`: no check, no candidate, no matching against anything.
+  Processed rather than left in the queue, where it would sit at the front
+  and use one of the run's checks every hour.
+- **It is re-opened when its text arrives.** On the pull that brings real
+  text, `upsertEvents` clears `processed_at` and the next run checks it
+  like any other question. An event that already had a candidate keeps it
+  and is re-checked in place.
+- **What counts as a placeholder.** The prompts in
+  `config/placeholder_questions.json`, compared after dropping any leading
+  `[tag]`, case and punctuation, and only on an exact match: a real
+  question that starts with the same words is a real question. A question
+  with no content words at all counts too. There is no minimum length:
+  "Android" is one word and was a real gap.
+
+To add a prompt, add a line to the config file. Migration 0010 adds the
+outcome and must be applied before the code that writes it runs.
+
+One thing to know about `upsertEvents`: rows being re-opened and rows that
+are not are written in two separate upserts. In one bulk upsert the client
+sends the union of every row's keys and fills what a row lacks with null,
+so a single re-opened row would clear `processed_at` on every other row in
+the batch.
+
 ## Where a correction goes
 
 There are two kinds of correction, and they go to different places.
@@ -451,7 +491,10 @@ Reading it:
   release's cards included. "Real gaps held" are help center gaps waiting
   for the daily release, a second sighting or a confirmed answer. "Not for the help center" is everything else: not a gap, already
   covered, internal, and account lookups skipped without a check. "Asked
-  again" are repeats of a question the loop already has.
+  again" are repeats of a question the loop already has. Questions set
+  aside as placeholders (see "Questions with no text yet") are in none of
+  these counts and not in "questions looked at"; when there are any, the
+  thread has a "Waiting for the real question" section.
 - **Each group in the thread gives its reason once, for the group.** The loop
   stores which group a question landed in, not a sentence of reasoning per
   question. A group lists at most ten questions and counts the rest. Empty

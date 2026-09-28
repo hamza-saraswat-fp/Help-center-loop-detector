@@ -112,6 +112,117 @@ test('upsertEvents: counts inserted, updated, and reset rows correctly in one ba
   assert.deepEqual(result, { inserted: 1, updated: 1, reset: 1 });
 });
 
+test('upsertEvents: re-opens an event that was set aside once its real question arrives', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': {
+      data: [{ source_event_id: 'evt-1', truth_kind: 'none', processed_at: '2026-09-11T00:00:00.000Z', outcome: 'no_question' }],
+      error: null,
+    },
+    'gap_events.upsert': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  const result = await events.upsertEvents([
+    baseEvent({ source_event_id: 'evt-1', question: '**Summary:** The user asked how to unlink a child customer from a parent.' }),
+  ]);
+
+  const selectCall = calls.find((c) => c.op === 'select');
+  assert.match(selectCall.select, /outcome/, 'the stored outcome has to be read to know the event was set aside');
+  const upsertCall = calls.find((c) => c.op === 'upsert');
+  assert.equal(upsertCall.payload[0].processed_at, null);
+  assert.equal(upsertCall.payload[0].outcome, null);
+  assert.ok(!('candidate_id' in upsertCall.payload[0]), 'an event that already has a candidate keeps it');
+  assert.deepEqual(result, { inserted: 0, updated: 0, reset: 1 });
+});
+
+test('upsertEvents: an event still carrying a placeholder stays set aside', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': {
+      data: [{ source_event_id: 'evt-1', truth_kind: 'none', processed_at: '2026-09-11T00:00:00.000Z', outcome: 'no_question' }],
+      error: null,
+    },
+    'gap_events.upsert': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  const result = await events.upsertEvents([baseEvent({ source_event_id: 'evt-1', question: 'How should I respond to this?' })]);
+
+  const upsertCall = calls.find((c) => c.op === 'upsert');
+  assert.ok(!('processed_at' in upsertCall.payload[0]));
+  assert.ok(!('outcome' in upsertCall.payload[0]));
+  assert.deepEqual(result, { inserted: 0, updated: 1, reset: 0 });
+});
+
+test('upsertEvents: real text re-opens only an event that was set aside, never one matched to a gap', async () => {
+  // The text of a duplicate can change too. It stays where it was filed:
+  // re-opening it would send the re-check to the gap it was matched to.
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': {
+      data: [{ source_event_id: 'evt-1', truth_kind: 'none', processed_at: '2026-09-11T00:00:00.000Z', outcome: 'duplicate' }],
+      error: null,
+    },
+    'gap_events.upsert': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  const result = await events.upsertEvents([baseEvent({ source_event_id: 'evt-1', question: 'A real question about invoices' })]);
+
+  assert.ok(!('processed_at' in calls.find((c) => c.op === 'upsert').payload[0]));
+  assert.equal(result.reset, 0);
+});
+
+test('upsertEvents: re-opened and unchanged rows go out in separate upserts', async () => {
+  // In one bulk upsert the client sends the union of every row's keys and
+  // fills what a row lacks with null, so one re-opened row would clear
+  // processed_at on every other existing row in the batch.
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': {
+      data: [
+        { source_event_id: 'evt-done', truth_kind: 'human', processed_at: '2026-09-11T00:00:00.000Z', outcome: 'candidate' },
+        { source_event_id: 'evt-answered', truth_kind: 'none', processed_at: '2026-09-11T00:00:00.000Z', outcome: 'candidate' },
+        { source_event_id: 'evt-waiting', truth_kind: 'none', processed_at: '2026-09-11T00:00:00.000Z', outcome: 'no_question' },
+      ],
+      error: null,
+    },
+    'gap_events.upsert': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  const result = await events.upsertEvents([
+    baseEvent({ source_event_id: 'evt-new' }),
+    baseEvent({ source_event_id: 'evt-done', truth_kind: 'human' }),
+    baseEvent({ source_event_id: 'evt-answered', truth_kind: 'human' }),
+    baseEvent({ source_event_id: 'evt-waiting', question: 'Can the due date on an invoice be optional?' }),
+  ]);
+
+  assert.deepEqual(result, { inserted: 1, updated: 1, reset: 2 });
+  const upserts = calls.filter((c) => c.op === 'upsert');
+  assert.equal(upserts.length, 2);
+  const [unchanged, reopened] = upserts;
+  assert.deepEqual(unchanged.payload.map((r) => r.source_event_id), ['evt-new', 'evt-done']);
+  for (const row of unchanged.payload) {
+    assert.ok(!('processed_at' in row) && !('outcome' in row), `${row.source_event_id} must not carry the reset columns`);
+  }
+  assert.deepEqual(reopened.payload.map((r) => r.source_event_id), ['evt-answered', 'evt-waiting']);
+  for (const row of reopened.payload) {
+    assert.equal(row.processed_at, null);
+    assert.equal(row.outcome, null);
+  }
+  for (const call of upserts) assert.equal(call.onConflict, 'source,source_event_id');
+});
+
+test('upsertEvents: a batch with nothing to re-open makes one upsert, not an empty second one', async () => {
+  const { client, calls } = fakeSupabase({
+    'gap_events.select': { data: [], error: null },
+    'gap_events.upsert': { data: null, error: null },
+  });
+  const events = createEventsRepo({ client, now });
+
+  await events.upsertEvents([baseEvent({ source_event_id: 'evt-1' }), baseEvent({ source_event_id: 'evt-2' })]);
+
+  assert.equal(calls.filter((c) => c.op === 'upsert').length, 1);
+});
+
 test('upsertEvents: select filters by source and the batch ids', async () => {
   const { client, calls } = fakeSupabase({
     'gap_events.select': { data: [], error: null },

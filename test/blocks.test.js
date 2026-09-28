@@ -767,6 +767,19 @@ test('buildDailyThread: with the daily release off, the held line promises no mo
   assert.doesNotMatch(texts[0], /Each weekday morning/);
 });
 
+test('buildDailyThread: questions waiting for their text get their own section, after asked again', () => {
+  const texts = buildDailyThread(
+    daySummary({ eventCounts: { total: 11, byOutcome: { candidate: 5, duplicate: 3, no_question: 3 }, bySource: { sidecar: 9, juju: 2 } } }),
+  ).blocks.map((b) => b.text.text);
+  assert.equal(texts.length, 8);
+  assert.equal(texts[4], '*Asked again (3)*\nRepeats of questions the loop already knows about.');
+  assert.equal(
+    texts[5],
+    '*Waiting for the real question (3)*\nA rep clicked a quick action, so all Sidecar has stored so far is "How should I respond to this?". The loop checks each one once Sidecar writes its summary.',
+  );
+  assert.match(texts[6], /^\*Cards\*/);
+});
+
 test('buildDailyThread: every group with its reason, then cards, then under the hood', () => {
   const texts = buildDailyThread(daySummary()).blocks.map((b) => b.text.text);
   assert.equal(texts.length, 7);

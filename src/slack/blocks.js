@@ -805,7 +805,7 @@ function dailyGroup(title, reason, items, extraLine = null) {
  * @returns {{text:string, blocks:Array<object>}}
  */
 export function buildDailyThread(summary) {
-  const { groups, repeats, shortcuts, cards, health, since, now, releaseMax = 0 } = summary;
+  const { groups, repeats, shortcuts, noQuestion = 0, cards, health, since, now, releaseMax = 0 } = summary;
   const when = sinceLabel(since, now);
   const sections = [];
 
@@ -845,6 +845,11 @@ export function buildDailyThread(summary) {
   }
   if (repeats > 0) {
     sections.push(`*Asked again (${repeats})*\nRepeats of questions the loop already knows about.`);
+  }
+  if (noQuestion > 0) {
+    sections.push(
+      `*Waiting for the real question (${noQuestion})*\nA rep clicked a quick action, so all Sidecar has stored so far is "How should I respond to this?". The loop checks each one once Sidecar writes its summary.`,
+    );
   }
   if (sections.length === 0) sections.push(`Nothing new came in ${when}.`);
 

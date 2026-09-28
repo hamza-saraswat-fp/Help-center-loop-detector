@@ -29,6 +29,7 @@ import { redactSecrets } from './util/redact.js';
 import { normalizeEvent } from './sources/adapter.js';
 import { holdUntil } from './prefilter/hold.js';
 import { destinationShortcut, loadShortcutRules } from './prefilter/shortcut.js';
+import { isPlaceholderQuestion, loadPlaceholderPrompts } from './prefilter/placeholder.js';
 import { fingerprintOf } from './prefilter/fingerprint.js';
 import { computePriority } from './check/priority.js';
 import { runWithTrace, getTrace } from './trace.js';
@@ -72,9 +73,9 @@ const HELD_PROMOTABLE_VERDICTS = new Set(['MISSING', 'INCORRECT', 'NEEDS_EDIT'])
 
 // The `loop_runs` columns `finishRun`'s payload is allowed to touch --
 // see migrations/0001_loop_schema.sql. `stats` carries fields (`results`,
-// `held_unconfirmed`, `gaps_released`) that exist for logging and the
-// caller's return value but are not columns; sending them through would fail
-// the update.
+// `held_unconfirmed`, `gaps_released`, `no_question`) that exist for logging
+// and the caller's return value but are not columns; sending them through
+// would fail the update.
 const LOOP_RUNS_COLUMNS = [
   'mode',
   'git_sha',
@@ -164,6 +165,8 @@ export function createRun({
   // file that has gone missing or unparseable should fail the run at the top
   // rather than throw from inside the per-event loop.
   shortcutRules = loadShortcutRules(),
+  // Same reasoning: read once, fail at the top.
+  placeholderPrompts = loadPlaceholderPrompts(),
   ownerMapping,
   // Task 14's two lanes. They are seams here on purpose: the orchestrator
   // decides *when* polling happens (every run unless --skip-poll) so that
@@ -217,6 +220,7 @@ export function createRun({
       candidates_new: 0,
       duplicates: 0,
       held: 0,
+      no_question: 0,
       held_unconfirmed: 0,
       gaps_released: 0,
       cards_posted: 0,
@@ -419,6 +423,28 @@ export function createRun({
           stats.held += 1;
           if (!dryRun) await events.markHeld(event.id);
           log(LANE, `held ${label} until ${held}`);
+          return;
+        }
+
+        // No question yet: a quick-action click in Sidecar arrives as the
+        // button's own words ("How should I respond to this?") and only
+        // becomes the conversation summary hours later. Fingerprinted, the
+        // placeholder is two words that matched every other placeholder, so
+        // each one was filed as a repeat of the first and never checked.
+        // Such an event is set aside before anything can match it: no
+        // fingerprint, no dedup, no check, no candidate. It is marked
+        // processed rather than left in the queue, where it would sit at the
+        // front and use one of the run's checks every hour; `upsertEvents`
+        // re-opens it on the pull that brings real text. An event that
+        // already has a candidate keeps it, so the re-check lands in place.
+        if (isPlaceholderQuestion(event.question, placeholderPrompts)) {
+          stats.no_question += 1;
+          if (dryRun) {
+            log(LANE, `dry-run no question yet: ${label} kind=${event.kind}`);
+            return;
+          }
+          await events.markProcessed(event.id, 'no_question', { candidateId: event.candidate_id ?? null });
+          log(LANE, `no question yet for ${label}; set aside until its text arrives`);
           return;
         }
 

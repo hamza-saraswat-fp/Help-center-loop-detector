@@ -1,5 +1,6 @@
 import { getLoopClient } from './supabase.js';
 import { error as logError } from '../log.js';
+import { isPlaceholderQuestion } from '../prefilter/placeholder.js';
 
 // gap_events: one row per tool-detected event, deduped on
 // (source, source_event_id) so the 14-day re-pull (see plan's "Watermark"
@@ -7,13 +8,23 @@ import { error as logError } from '../log.js';
 //
 // PostgREST upsert cannot conditionally clear a column based on the existing
 // row, so upsertEvents does it in two round trips: read the batch's existing
-// (truth_kind, processed_at) first, then build a payload that only carries
-// processed_at/outcome for the rows whose truth just went from 'none' to
-// something else. That reset is what lets a Juju owner answering a question
-// after the fact reach the loop with no extra machinery: the event becomes
-// unprocessed again and the next run re-checks it with the human answer
-// attached. Every other write here follows the same "log and return a
-// harmless value, never throw" rule as src/db/runs.js.
+// (truth_kind, processed_at, outcome) first, then build a payload that only
+// carries processed_at/outcome for the rows that are being re-opened. Two
+// things re-open an event. Its truth went from 'none' to something else:
+// that is what lets a Juju owner answering a question after the fact reach
+// the loop with no extra machinery, the next run re-checks it with the human
+// answer attached. Or it was set aside as a placeholder (outcome
+// 'no_question', see src/prefilter/placeholder.js) and the real text has now
+// arrived.
+//
+// Re-opened rows and the rest are written in two separate upserts. In one
+// bulk upsert the client sends the union of every row's keys as the column
+// list and fills whatever a row lacks with null, so a single re-opened row
+// would clear processed_at and outcome on every other existing row in the
+// batch and put a fortnight of events back in the queue.
+//
+// Every other write here follows the same "log and return a harmless value,
+// never throw" rule as src/db/runs.js.
 
 const NORMALIZED_FIELDS = [
   'source',
@@ -38,7 +49,7 @@ function loopKeys(detail) {
   return Object.fromEntries(Object.entries(detail).filter(([key]) => key.startsWith('_')));
 }
 
-export function createEventsRepo({ client, now = () => new Date() }) {
+export function createEventsRepo({ client, now = () => new Date(), placeholderPrompts = undefined }) {
   async function sourceWatermark(source) {
     try {
       const { data, error } = await client
@@ -67,7 +78,7 @@ export function createEventsRepo({ client, now = () => new Date() }) {
     try {
       const { data: existingRows, error: selectError } = await client
         .from('gap_events')
-        .select('source_event_id, truth_kind, processed_at, detail')
+        .select('source_event_id, truth_kind, processed_at, outcome, detail')
         .eq('source', source)
         .in('source_event_id', ids);
 
@@ -76,14 +87,17 @@ export function createEventsRepo({ client, now = () => new Date() }) {
       const existingById = new Map((existingRows ?? []).map((row) => [row.source_event_id, row]));
 
       const counts = { inserted: 0, updated: 0, reset: 0 };
-      const payload = events.map((event) => {
+      const unchanged = [];
+      const reopened = [];
+      for (const event of events) {
         const row = {};
         for (const field of NORMALIZED_FIELDS) row[field] = event[field];
 
         const existing = existingById.get(event.source_event_id);
         if (!existing) {
           counts.inserted += 1;
-          return row;
+          unchanged.push(row);
+          continue;
         }
 
         // `detail` is the view's column, but the loop keeps its own
@@ -96,21 +110,30 @@ export function createEventsRepo({ client, now = () => new Date() }) {
         row.detail = { ...(row.detail ?? {}), ...loopKeys(existing.detail) };
 
         const truthNowAnswered = existing.truth_kind === 'none' && event.truth_kind !== 'none';
-        if (truthNowAnswered) {
+        // Keyed on the outcome the loop itself wrote, not on what the stored
+        // text looks like: an event can only be re-opened this way if it was
+        // set aside, never because it was matched to some other gap.
+        const questionNowReal =
+          existing.outcome === 'no_question' && !isPlaceholderQuestion(event.question, placeholderPrompts);
+        if (truthNowAnswered || questionNowReal) {
           counts.reset += 1;
           row.processed_at = null;
           row.outcome = null;
+          reopened.push(row);
         } else {
           counts.updated += 1;
+          unchanged.push(row);
         }
-        return row;
-      });
+      }
 
-      const { error: upsertError } = await client
-        .from('gap_events')
-        .upsert(payload, { onConflict: 'source,source_event_id' });
+      for (const payload of [unchanged, reopened]) {
+        if (payload.length === 0) continue;
+        const { error: upsertError } = await client
+          .from('gap_events')
+          .upsert(payload, { onConflict: 'source,source_event_id' });
 
-      if (upsertError) throw new Error(upsertError.message);
+        if (upsertError) throw new Error(upsertError.message);
+      }
       return counts;
     } catch (err) {
       logError('db', `upsertEvents failed for source=${source}: ${err.message}`);

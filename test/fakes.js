@@ -3,6 +3,7 @@
 // in-memory repo set the run orchestrator's tests assert against.
 
 import { jaccard } from '../src/prefilter/fingerprint.js';
+import { isPlaceholderQuestion } from '../src/prefilter/placeholder.js';
 
 /**
  * A fake `callModel`. Pass a fixed string to always return it, or a
@@ -273,7 +274,11 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
           (e) => e.source === event.source && e.source_event_id === event.source_event_id,
         );
         if (existing) {
-          const reset = existing.truth_kind === 'none' && event.truth_kind !== 'none';
+          // Same two rules as the real repo: the truth arrived, or the event
+          // was set aside as a placeholder and its real text has arrived.
+          const reset =
+            (existing.truth_kind === 'none' && event.truth_kind !== 'none') ||
+            (existing.outcome === 'no_question' && !isPlaceholderQuestion(event.question));
           // Same rule as the real repo: the loop's underscore-prefixed keys
           // inside `detail` survive a re-pull.
           const loopKeys = Object.fromEntries(
