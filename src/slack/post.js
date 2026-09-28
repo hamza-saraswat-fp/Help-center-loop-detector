@@ -9,7 +9,9 @@
 // — that check runs first, and a throw there is logged and returns null
 // without ever calling the Slack client. `blocks.js` already runs the same
 // check when it builds a card, so this is belt-and-suspenders against a
-// card built some other way.
+// card built some other way. No mention is allowed unless the caller names
+// it in `allowMentions`, which only the "Seen again" thread reply does, and
+// only with the ids in SLACK_TAG_USER_IDS.
 
 import { WebClient } from '@slack/web-api';
 
@@ -33,12 +35,12 @@ export function createSlackPoster({ client, timeoutMs = 10000 } = {}) {
    * expected to treat `null` as "did not post" and continue the run.
    * @param {string} channel
    * @param {{text:string, blocks:Array<object>}} card
-   * @param {{threadTs?:string}} [opts]
+   * @param {{threadTs?:string, allowMentions?:string[]}} [opts]
    * @returns {Promise<string|null>}
    */
-  async function postCard(channel, card, { threadTs } = {}) {
+  async function postCard(channel, card, { threadTs, allowMentions = [] } = {}) {
     try {
-      assertNoForbiddenMentions(card.text);
+      assertNoForbiddenMentions(card.text, { allow: allowMentions ?? [] });
     } catch (err) {
       logError(LANE, `refused to post: ${err.message}`, { channel });
       return null;
@@ -67,10 +69,11 @@ export function createSlackPoster({ client, timeoutMs = 10000 } = {}) {
    * @param {string} channel
    * @param {string} threadTs
    * @param {{text:string, blocks:Array<object>}} card
+   * @param {{allowMentions?:string[]}} [opts]
    * @returns {Promise<string|null>}
    */
-  async function replyInThread(channel, threadTs, card) {
-    return postCard(channel, card, { threadTs });
+  async function replyInThread(channel, threadTs, card, { allowMentions = [] } = {}) {
+    return postCard(channel, card, { threadTs, allowMentions });
   }
 
   return { postCard, replyInThread };
@@ -89,6 +92,6 @@ export function postCard(channel, card, opts) {
   return poster().postCard(channel, card, opts);
 }
 
-export function replyInThread(channel, threadTs, card) {
-  return poster().replyInThread(channel, threadTs, card);
+export function replyInThread(channel, threadTs, card, opts) {
+  return poster().replyInThread(channel, threadTs, card, opts);
 }

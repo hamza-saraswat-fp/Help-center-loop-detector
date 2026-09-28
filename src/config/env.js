@@ -82,15 +82,18 @@ export function loadEnv(envObject) {
   // of staying silent, so the team can watch verdicts before going live.
   const slackShadowChannelId = envObject.SLACK_SHADOW_CHANNEL_ID || '';
 
-  // Slack user IDs to @-mention on cards. Default [] — no mentions, since
-  // Global Constraints forbid any mention unless explicitly allow-listed.
+  // Slack user IDs the loop tags when a question is asked again on a card
+  // that is already out (the "Seen again" thread reply). Default [] — no
+  // mentions, since Global Constraints forbid any mention unless explicitly
+  // allow-listed.
   const slackTagUserIds = parseCsv(envObject.SLACK_TAG_USER_IDS);
 
-  // Who is allowed to action a card via reaction. Defaults to the tag list
-  // when unset; if neither is set, [] means "any human" (reactions.js is
-  // responsible for excluding the bot's own user, not this list).
-  const rawReactionUserIds = parseCsv(envObject.SLACK_REACTION_USER_IDS);
-  const slackReactionUserIds = rawReactionUserIds.length > 0 ? rawReactionUserIds : slackTagUserIds;
+  // Who is allowed to action a card via reaction. [] means "any human"
+  // (reactions.js is responsible for excluding the bot's own user, not this
+  // list). Deliberately independent of the tag list: it used to default to
+  // it, which meant that choosing who gets tagged silently stopped everyone
+  // else's reactions from counting.
+  const slackReactionUserIds = parseCsv(envObject.SLACK_REACTION_USER_IDS);
 
   // Gate for @-mentioning category owners on "needs answer" cards. Default
   // false — opt in once routing has been verified.

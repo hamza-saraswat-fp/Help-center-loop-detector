@@ -11,6 +11,8 @@
 // question nobody has answered, and a possible gap the loop is not sure
 // about. Cards never @-mention anyone. The literal words "@Claude" appear only in the
 // thread's "To fix it" section, as words a human types, not a Slack mention.
+// The one thing that does tag people is the "Seen again" thread reply
+// (`buildDuplicateReply`), and only the ids in SLACK_TAG_USER_IDS.
 // `assertNoForbiddenMentions` is the enforcement point every builder here
 // runs before returning, so a bad model-written paraphrase throws at build
 // time instead of silently posting a ping.
@@ -571,18 +573,43 @@ export function buildGapThread({ candidate, linked = [], now = new Date() }) {
   return { text, blocks };
 }
 
+// A Slack member id: a user (U...) or an enterprise-grid user (W...).
+const USER_ID_RE = /^[UW][A-Z0-9]+$/;
+
 /**
  * A thread reply posted when a new event merges into an existing candidate:
  * "Seen again: now N times (Source n, ...). Latest: <reportedBy>."
- * @param {{candidate:object, linked:Array<object>, latest:{source:string, occurred_at:string}, now?:Date}} args
+ *
+ * A bot's thread reply notifies only the people already following that
+ * thread, so on a card nobody has replied to it reaches no one. The ids in
+ * `mentionUserIds` (SLACK_TAG_USER_IDS, never anything a rep or the model
+ * wrote) are tagged at the end of the line, so the people who own the help
+ * center hear about a repeat whichever card it lands on.
+ *
+ * Checked in two stages on purpose. The sentence is checked first with no
+ * allow-list: `reportedBy` builds it from source data, and a mention in
+ * there must never ride in on the list. Only then are the tags appended and
+ * the whole line checked against exactly those ids. A malformed id is
+ * dropped rather than thrown on: run.js's `buildCard` swallows a throw, so
+ * one typo in Railway would otherwise silence every reply.
+ * @param {{candidate:object, linked:Array<object>, latest:{source:string, occurred_at:string},
+ *   now?:Date, mentionUserIds?:string[]}} args
  * @returns {{text:string, blocks:Array<object>}}
  */
-export function buildDuplicateReply({ candidate, linked = [], latest, now = new Date() }) {
+export function buildDuplicateReply({ candidate, linked = [], latest, now = new Date(), mentionUserIds = [] }) {
   void candidate;
   const summary = seenSummary(linked, now);
 
-  const text = `Seen again: now ${summary.count} times (${bySourceParenthetical(summary.bySource)}). Latest: ${reportedBy(latest)}.`;
-  assertNoForbiddenMentions(text);
+  const sentence = `Seen again: now ${summary.count} times (${bySourceParenthetical(summary.bySource)}). Latest: ${reportedBy(latest)}.`;
+  assertNoForbiddenMentions(sentence);
+
+  const tagIds = [...new Set(mentionUserIds ?? [])].filter((id) => typeof id === 'string' && USER_ID_RE.test(id));
+  if (tagIds.length === 0) return sectionsToCard([sentence], [sentence]);
+
+  // The same line in the block and in the plain-text fallback: Slack does
+  // not say which of the two a notification is raised from.
+  const text = `${sentence} cc ${tagIds.map((id) => `<@${id}>`).join(' ')}`;
+  assertNoForbiddenMentions(text, { allow: tagIds });
 
   return sectionsToCard([text], [text]);
 }

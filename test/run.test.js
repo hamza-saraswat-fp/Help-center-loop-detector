@@ -105,8 +105,8 @@ function fakePoster({ postTs = () => 'ts-1' } = {}) {
       poster.posts.push({ channel, card, ts });
       return ts;
     },
-    async replyInThread(channel, threadTs, card) {
-      poster.replies.push({ channel, threadTs, card });
+    async replyInThread(channel, threadTs, card, opts = {}) {
+      poster.replies.push({ channel, threadTs, card, opts });
       return 'ts-reply';
     },
   };
@@ -2689,4 +2689,142 @@ test('a re-check that cannot read its candidate writes nothing and leaves the ev
   const event = repos.state.events[0];
   assert.equal(event.processed_at, null, 'the event is still pending a retry');
   assert.equal(event.detail._check_attempts, 1);
+});
+
+// ---------------------------------------------------------------------------
+// "Seen again" replies: who is tagged, and when the thread stays quiet.
+// ---------------------------------------------------------------------------
+
+const ADDI = 'U0ADDI00001';
+const ASHLI = 'U0ASHLI0002';
+
+// A card that is already out, and the sighting that created it. `firstLink`
+// is the conversation that sighting came from; the new sighting is
+// SIDECAR_ROWS[0] with `newLink`.
+function repeatHarness({ firstLink, newLink, env = { slackTagUserIds: [ADDI, ASHLI] }, firstSource = 'sidecar' } = {}) {
+  const row = { ...SIDECAR_ROWS[0], source_link: newLink };
+  const fp = fingerprintFor(row, 'sidecar');
+  return harness({
+    env,
+    rows: { sidecar: [row] },
+    seed: {
+      events: [
+        {
+          id: 1,
+          source: firstSource,
+          source_event_id: 'first-sighting',
+          kind: 'thumbs_down',
+          occurred_at: '2026-09-01T00:00:00.000Z',
+          truth_kind: 'none',
+          source_link: firstLink,
+          detail: {},
+          processed_at: '2026-09-01T01:00:00.000Z',
+          outcome: 'candidate',
+          candidate_id: 1,
+        },
+      ],
+      candidates: [
+        {
+          id: 1,
+          fingerprint: fp.hash,
+          fingerprint_terms: fp.terms,
+          category: fp.category,
+          destination: 'help_center',
+          verdict: 'MISSING',
+          priority: 'P3',
+          status: 'posted',
+          slack_channel: 'C-GAPS',
+          slack_ts: 'ts-card',
+          question_paraphrase: 'Are purchase orders visible on the customer portal?',
+          needs_answer: true,
+          event_count: 1,
+          first_seen: '2026-09-01T00:00:00.000Z',
+          last_seen: '2026-09-01T00:00:00.000Z',
+          created_at: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+}
+
+test('a repeat from a new conversation replies in the thread and tags the configured users', async () => {
+  const { run, repos, poster } = repeatHarness({ firstLink: '/admin/support/activity/c/aaa', newLink: '/admin/support/activity/c/bbb' });
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.duplicates, 1);
+  assert.equal(poster.posts.length, 0, 'a repeat never posts a new card');
+  assert.equal(poster.replies.length, 1);
+  const reply = poster.replies[0];
+  assert.equal(reply.threadTs, 'ts-card');
+  assert.match(reply.card.text, new RegExp(`^Seen again: now 2 times \\(Sidecar 2\\)\\. .* cc <@${ADDI}> <@${ASHLI}>$`));
+  assert.equal(reply.card.blocks[0].text.text, reply.card.text, 'the tag is in the block as well as the fallback text');
+  assert.deepEqual(reply.opts, { allowMentions: [ADDI, ASHLI] }, 'and the poster is told exactly which mentions to let through');
+  assert.equal(repos.state.candidates[0].event_count, 2);
+});
+
+test('with no tag list the reply goes out exactly as before, tagging nobody', async () => {
+  const { run, poster } = repeatHarness({ firstLink: '/c/aaa', newLink: '/c/bbb', env: {} });
+
+  await run(args());
+
+  assert.equal(poster.replies.length, 1);
+  assert.match(poster.replies[0].card.text, /^Seen again: now 2 times \(Sidecar 2\)\. Latest: /);
+  assert.doesNotMatch(poster.replies[0].card.text, /cc|<@/);
+  assert.deepEqual(poster.replies[0].opts, { allowMentions: [] });
+});
+
+test('a repeat from a conversation already on the card is counted, and the thread stays quiet', async () => {
+  // Gap #254: the same rep asked twice, three seconds apart, in one Sidecar
+  // conversation. That is a rephrase, not somebody asking again.
+  const link = '/admin/support/activity/c/5d333492';
+  const { run, repos, poster } = repeatHarness({ firstLink: link, newLink: link });
+
+  const { stats } = await run(args());
+
+  assert.equal(stats.duplicates, 1);
+  assert.equal(poster.replies.length, 0, 'no reply, so nobody is tagged');
+  assert.equal(poster.posts.length, 0);
+  assert.deepEqual(repos.state.actions, [], 'and no thread_reply is recorded');
+
+  assert.equal(repos.state.candidates[0].event_count, 2, 'the sighting still counts');
+  const event = repos.state.events.find((e) => e.source_event_id !== 'first-sighting');
+  assert.equal(event.outcome, 'duplicate');
+  assert.equal(event.candidate_id, 1);
+  assert.ok(event.processed_at);
+});
+
+test('the same link from a different source is a different conversation', async () => {
+  const { run, poster } = repeatHarness({ firstLink: '/c/123', newLink: '/c/123', firstSource: 'juju' });
+
+  await run(args());
+
+  assert.equal(poster.replies.length, 1);
+  assert.match(poster.replies[0].card.text, /Seen again: now 2 times \(Juju 1, Sidecar 1\)/);
+});
+
+test('sightings with no link cannot be placed in a conversation, so they still reply', async () => {
+  const { run, poster } = repeatHarness({ firstLink: null, newLink: null });
+
+  await run(args());
+
+  assert.equal(poster.replies.length, 1);
+  assert.match(poster.replies[0].card.text, / cc <@U0ADDI00001> <@U0ASHLI0002>$/);
+});
+
+test('a same-conversation repeat still promotes a held gap: only the reply changes', async () => {
+  const link = '/admin/support/activity/c/c4dd9ae5';
+  const h = repeatHarness({ firstLink: link, newLink: link });
+  Object.assign(h.repos.state.candidates[0], {
+    status: 'logged',
+    slack_ts: null,
+    slack_channel: null,
+    evidence: { hold_reason: 'unconfirmed_single' },
+  });
+
+  const { stats } = await h.run(args());
+
+  assert.equal(stats.duplicates, 1);
+  assert.equal(h.repos.state.candidates[0].status, 'posted', 'promoted and posted, as before');
+  assert.equal(h.poster.posts.length, 1);
 });

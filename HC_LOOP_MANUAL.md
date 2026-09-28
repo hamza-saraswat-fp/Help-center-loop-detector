@@ -131,6 +131,21 @@ trigger anything themselves. An `@Claude` inside a quoted note or question
 loses its `@` before it goes in the box, so quoted text can never read as
 a second instruction.
 
+**The one reply that tags people.** When a question is asked again on a
+card that is already out, the loop replies in that card's thread: "Seen
+again: now 2 times (Sidecar 2). Latest: ...". A bot's thread reply notifies
+only the people already following that thread, so on a card nobody has
+replied to it would reach no one. The reply therefore ends with
+`cc <@...>` for each id in `SLACK_TAG_USER_IDS`. Unset, nobody is tagged.
+The ids come only from that setting, never from anything a rep or the
+model wrote, and a malformed id is dropped rather than sent.
+
+A repeat from a conversation the card already counts (the same source and
+the same `source_link`) gets no reply at all: that is one rep rephrasing,
+not somebody asking again. It is still recorded and still counts toward
+"seen N times". Who is tagged has no effect on whose reactions count:
+`SLACK_REACTION_USER_IDS` is its own list, and unset means any human.
+
 ## Routing
 
 `INCORRECT`, `MISSING`, and `NEEDS_EDIT` destined for the help center post

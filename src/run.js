@@ -551,19 +551,46 @@ export function createRun({
             log(LANE, `candidate #${existing.id} promoted from a held single: seen again from ${label}`);
           }
 
+          // One rep rephrasing inside a conversation the card already
+          // counts is not somebody asking again. It is still merged, linked
+          // and counted above; it just does not go back into the thread and
+          // tag people. `linked` already includes this event, so it has to
+          // be left out of its own comparison. An event with no link at all
+          // cannot be placed in a conversation, and replies as before.
+          const sameConversation =
+            Boolean(event.source_link) &&
+            linked.some(
+              (other) =>
+                other.id !== event.id && other.source === event.source && other.source_link === event.source_link,
+            );
+
           // `existing` may be a near-duplicate row, which carries no
           // slack_ts; `merged` is the full row the update returned.
           const slackTs = merged.slack_ts ?? existing.slack_ts ?? null;
-          if (existing.status === 'posted' && channel && slackTs) {
+          const canReply = existing.status === 'posted' && channel && slackTs;
+          if (canReply && sameConversation) {
+            log(LANE, `no thread reply for candidate #${existing.id}: ${label} is from a conversation it already counts`);
+          } else if (canReply) {
+            // Who hears about it: a bot's reply in a thread notifies only
+            // the people already following that thread, so the reply tags
+            // the ids in SLACK_TAG_USER_IDS. Unset, nobody is tagged.
+            const tagUserIds = env.slackTagUserIds ?? [];
             // Building a card can throw (the mention guard). A reply nobody
             // gets is worth an error line, not a dead run -- the merge itself
             // has already happened.
             const reply = buildCard(
-              () => buildDuplicateReply({ candidate: merged, linked, latest: event, now: startedAt }),
+              () =>
+                buildDuplicateReply({
+                  candidate: merged,
+                  linked,
+                  latest: event,
+                  now: startedAt,
+                  mentionUserIds: tagUserIds,
+                }),
               `the thread reply for candidate #${existing.id}`,
             );
             if (reply) {
-              const ts = await poster.replyInThread(channel, slackTs, reply);
+              const ts = await poster.replyInThread(channel, slackTs, reply, { allowMentions: tagUserIds });
               if (ts) {
                 await actions.recordAction({ candidateId: existing.id, action: 'thread_reply', slackTs: ts });
               }
