@@ -43,6 +43,7 @@ export function groupOf(candidate) {
  *   latestBySource?: object,         this run's events_by_source
  *   configuredSources?: string[],    sources that have a connection string
  *   releaseMax?: number,             held gaps the daily release lets through a day; 0 is off
+ *   lastWeekEdits?: number|null,     Mondays only: last week's edits from cards; null leaves the line out
  * }} input
  */
 export function summarizeDay({
@@ -56,6 +57,7 @@ export function summarizeDay({
   latestBySource = {},
   configuredSources = [],
   releaseMax = 0,
+  lastWeekEdits = null,
 }) {
   const sinceDate = since instanceof Date ? since : new Date(since);
 
@@ -93,6 +95,9 @@ export function summarizeDay({
   // --- cards ---------------------------------------------------------------
   const oldestWaiting = [...waiting].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0] ?? null;
   const fixed = outcomes.filter((a) => a.action === 'adopted' || a.action === 'merged').length;
+  // True, but not for the public help center: its own count, because it is
+  // neither a fix nor a "this was not worth showing me".
+  const internalOnly = outcomes.filter((a) => a.action === 'internal_only').length;
   const rejected = outcomes.filter((a) => a.action === 'rejected').length;
 
   return {
@@ -120,6 +125,7 @@ export function summarizeDay({
     // So the thread can say what actually happens to a held gap: with the
     // daily release on, waiting for a second sighting is not the only way out.
     releaseMax,
+    lastWeekEdits,
     cards: {
       waiting: waiting.length,
       oldestWaiting: oldestWaiting
@@ -129,6 +135,7 @@ export function summarizeDay({
           }
         : null,
       fixed,
+      internalOnly,
       rejected,
     },
     health: {

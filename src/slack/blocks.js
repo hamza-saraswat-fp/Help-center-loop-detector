@@ -71,8 +71,6 @@ const DEFAULT_PRIORITY_DOT = ':white_circle:';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-const MAX_LIST_ITEMS = 15;
-
 export class ForbiddenMentionError extends Error {
   constructor(message) {
     super(message);
@@ -385,9 +383,9 @@ export function cardKind(candidate) {
 }
 
 const ASK_LINE = {
-  confirmed: 'Want this changed? Reply here with *@Claude* and say yes. React :x: if not.',
-  question: '*Does anyone know?* Reply with the answer, or react :x: if it is not worth adding.',
-  check: 'Take a look. React :x: if it is noise, or reply with what is wrong.',
+  confirmed: 'Want this changed? Reply here with *@Claude* and say yes. React :lock: if it is true but internal only, or :x: and say why.',
+  question: '*Does anyone know?* Reply with the answer. React :lock: if it is true but internal only, or :x: and say why.',
+  check: 'Take a look. React :x: if it is noise, :lock: if it is true but internal only, or reply with what is wrong.',
 };
 
 // The article as a visible link, so nobody has to click to learn what it is.
@@ -513,18 +511,18 @@ function contextSection({ candidate, reportingEvent, note, title, saysNow }) {
 function actionSections({ kind, claudeRequest }) {
   if (kind === 'question') {
     return [
-      '*Does anyone know?*\nReply with the answer, or react :x: if it is not worth adding. Once there is an answer, reply here with *@Claude* and the answer. Claude reads the article, proposes the wording, and opens the change once you approve.',
+      '*Does anyone know?*\nReply with the answer. Once there is one, reply here with *@Claude* and the answer. Claude reads the article, proposes the wording, and opens the change once you approve.\nNot for the help center? React :lock: on the card if it is true but internal only, and add the answer or workaround here if you have one. React :x: if it is not worth adding, and say why in a few words.',
     ];
   }
   if (kind === 'check') {
     return [
-      '*Take a look*\nReact :x: if it is noise, or reply with what is wrong. If it is a real gap, reply *@Claude* and say what should change.',
+      '*Take a look*\nReact :x: on the card if it is noise, or :lock: if it is true but internal only, and say why in a few words. If it is a real gap, reply *@Claude* and say what should change.',
     ];
   }
   return [
     '*To fix it*\nReply here with *@Claude* and say yes. Claude reads the article, proposes the wording, and opens the change once you approve. If Claude needs more, paste the request below with your reply.',
     `\`\`\`${truncateField(claudeRequest, PASTE_REQUEST_BUDGET)}\`\`\``,
-    "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.",
+    "Or make the edit yourself, then react :white_check_mark: on the card so the loop knows it's done. React :lock: if it is true but internal only, or :x: if this isn't a real gap, and say why in a few words.",
   ];
 }
 
@@ -614,97 +612,6 @@ export function buildDuplicateReply({ candidate, linked = [], latest, now = new 
   return sectionsToCard([text], [text]);
 }
 
-function formatListSection(title, items, formatter) {
-  const count = items.length;
-  const shown = items.slice(0, MAX_LIST_ITEMS);
-  const lines = [`${title} (${count})`, ...shown.map(formatter)];
-  if (count > MAX_LIST_ITEMS) lines.push(`…and ${count - MAX_LIST_ITEMS} more`);
-  return lines.join('\n');
-}
-
-/**
- * The weekly digest of things that don't get their own candidate card: a
- * single unconfirmed sighting held rather than posted (see "The rule" in
- * HC_LOOP_MANUAL.md's Routing section), UNFINDABLE (exists but hard to
- * find), HIDDEN (exists but hidden, nav changes need Evan, so these are
- * flagged rather than auto-fixed), and internal-only matches (not for the
- * help center at all). The unconfirmed list is first, since it is the
- * largest and most actionable of the four. Last comes what was rejected
- * this week and why: each rejected card with what people wrote in its
- * thread (`reasons`, from src/slack/replies.js), which is how a recurring
- * detection mistake gets noticed and fixed in the prompt.
- * @param {{since:string|Date, unconfirmed?:Array<object>, unfindable?:Array<object>,
- *   hidden?:Array<object>, internal?:Array<object>, rejected?:Array<object>, now?:Date}} args
- * @returns {{text:string, blocks:Array<object>}}
- */
-export function buildWeeklySummary({
-  since,
-  unconfirmed = [],
-  unfindable = [],
-  hidden = [],
-  internal = [],
-  rejected = [],
-  edits = null,
-  now = new Date(),
-}) {
-  void now;
-  // The number the loop is measured by, first: help center edits this week,
-  // from cards and in total. `edits` is null when GitHub could not be read
-  // (the token lacks pull request access), and the line says so rather
-  // than showing a zero that is not true.
-  const editsLine =
-    edits === null
-      ? 'Help center edits this week: not available (GitHub token cannot read pull requests)'
-      : `Help center edits this week: *${edits.fromCards}* from loop cards, ${edits.total} in total`;
-  const header = `Weekly summary since ${formatShortDate(since)}\n${editsLine}`;
-
-  const unconfirmedSection = formatListSection(
-    'Seen once, not confirmed',
-    unconfirmed,
-    (item) =>
-      `#${item.id} ${item.headline || item.question_paraphrase} · ${articleTitle(item.target_article_path) || 'no article'}`,
-  );
-  const unfindableSection = formatListSection(
-    'Exists but hard to find',
-    unfindable,
-    (item) => `#${item.id} ${item.question_paraphrase} · ${item.target_article_path}`,
-  );
-  const hiddenSection = formatListSection(
-    'Exists but hidden',
-    hidden,
-    (item) => `#${item.id} ${item.target_article_path} · parent it in nav`,
-  );
-  const internalSection = formatListSection(
-    'Internal, not for the help center',
-    internal,
-    (item) => `#${item.id} ${item.question_paraphrase} · ${item.category}`,
-  );
-
-  // People's own words from the thread: mentions scrubbed, flattened to one
-  // line (so a reply that opens with "@Claude" can never start a line here),
-  // at most two per card.
-  const rejectedSection = formatListSection('Rejected, and why', rejected, (item) => {
-    const reasons = (item.reasons ?? [])
-      .map((reason) => scrubNote(reason)?.replace(/\s+/g, ' ').trim())
-      .filter(Boolean)
-      .slice(0, 2);
-    const why = reasons.length > 0 ? reasons.map((reason) => `"${reason}"`).join(' / ') : 'no reason given';
-    return `#${item.id} ${item.headline || item.question_paraphrase} · ${why}`;
-  });
-
-  const lines = [
-    header, '', unconfirmedSection, '', unfindableSection, '', hiddenSection, '', internalSection, '', rejectedSection,
-  ];
-  const text = lines.join('\n');
-  assertNoForbiddenMentions(text);
-
-  const blockTexts = [header, unconfirmedSection, unfindableSection, hiddenSection, internalSection, rejectedSection];
-  return {
-    text: truncateSlackText(text, 4000),
-    blocks: blockTexts.map((t) => ({ type: 'section', text: { type: 'mrkdwn', text: truncateSlackText(t, 3000) } })),
-  };
-}
-
 // --- daily check ---------------------------------------------------------------
 //
 // One short post each weekday morning, details in its thread (the summary
@@ -746,7 +653,7 @@ function joinNames(names) {
  * @returns {{text:string, blocks:Array<object>}}
  */
 export function buildDailyPost(summary) {
-  const { questions, sources, cardsPosted, groups, repeats, notForHelpCenter, cards, health, since, now } = summary;
+  const { questions, sources, cardsPosted, groups, repeats, notForHelpCenter, cards, health, since, now, lastWeekEdits = null } = summary;
   const when = sinceLabel(since, now);
   const held = groups.held.length;
 
@@ -764,6 +671,13 @@ export function buildDailyPost(summary) {
   if (repeats > 0) counts.push(`:repeat: *${repeats}* asked again`);
 
   const body = questions === 0 && cardsPosted === 0 ? [header, looked] : [header, looked, counts.join('    ')];
+  // Mondays only (src/run.js decides): the number the loop is measured by,
+  // help center edits that started from a card. A count of zero is printed;
+  // `null` means GitHub could not be read, and the line is left out rather
+  // than show a zero that is not true.
+  if (lastWeekEdits !== null && lastWeekEdits !== undefined) {
+    body.push(`Last week: *${lastWeekEdits}* help center ${plural(lastWeekEdits, 'edit')} from loop cards`);
+  }
 
   const waiting = `${cards.waiting} ${plural(cards.waiting, 'card')} waiting`;
   const status = health.ok
@@ -815,8 +729,8 @@ export function buildDailyThread(summary) {
     // loop with the release off is not going to post.
     const heldReason =
       releaseMax > 0
-        ? `Each weekday morning the loop posts up to ${releaseMax} of the ones it is most sure about. The rest become cards when someone asks again or confirms the answer. They are also in Monday's summary.`
-        : "These become cards the moment someone asks again or confirms the answer. They are also in Monday's summary.";
+        ? `Each weekday morning the loop posts up to ${releaseMax} of the ones it is most sure about. The rest become cards when someone asks again or confirms the answer.`
+        : 'These become cards the moment someone asks again or confirms the answer.';
     sections.push(dailyGroup('Held: real gaps, seen once, nobody confirmed', heldReason, groups.held));
   }
   if (groups.notAGap.length > 0 || shortcuts > 0) {
@@ -856,7 +770,9 @@ export function buildDailyThread(summary) {
   const oldest = cards.oldestWaiting
     ? ` (oldest: Gap #${cards.oldestWaiting.id}, ${cards.oldestWaiting.days} ${plural(cards.oldestWaiting.days, 'day')})`
     : '';
-  sections.push(`*Cards*\n${cards.waiting} waiting${oldest} · ${cards.fixed} fixed · ${cards.rejected} rejected ${when}`);
+  sections.push(
+    `*Cards*\n${cards.waiting} waiting${oldest} · ${cards.fixed} fixed · ${cards.internalOnly ?? 0} internal only · ${cards.rejected} rejected ${when}`,
+  );
 
   const rows = health.rowsBySource.map((source) => `${source.name} ${source.rows} ${plural(source.rows, 'row')}`);
   const hood = [`${health.ranRuns} of ${health.expectedRuns} hourly checks ran`, ...rows, `$${health.costUsd.toFixed(2)}`].join(' · ');

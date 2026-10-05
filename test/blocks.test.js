@@ -16,7 +16,6 @@ import {
   buildGapPost,
   buildGapThread,
   buildDuplicateReply,
-  buildWeeklySummary,
   buildDailyPost,
   buildDailyThread,
   buildPasteRequest,
@@ -262,7 +261,7 @@ test('buildGapPost: a confirmed card is three lines, the article linked in the h
     card.blocks[0].text.text,
     ':red_circle: *<https://help.fieldpulse.com/using-fieldpulse/customers/tags|Managing Customer Tags>*\n' +
       'The article says there is no do-not-service flag. There is one.\n' +
-      'Want this changed? Reply here with *@Claude* and say yes. React :x: if not.',
+      'Want this changed? Reply here with *@Claude* and say yes. React :lock: if it is true but internal only, or :x: and say why.',
   );
   assert.equal(card.blocks.length, 2, 'no buttons, no footer line');
 });
@@ -294,13 +293,13 @@ test('buildGapPost: a question card asks who knows, and names the closest articl
     card.blocks[0].text.text,
     ':white_circle: *Needs an answer* · <https://help.fieldpulse.com/using-fieldpulse/customers/tags|Managing Customer Tags>\n' +
       'The article says there is no do-not-service flag. There is one.\n' +
-      '*Does anyone know?* Reply with the answer, or react :x: if it is not worth adding.',
+      '*Does anyone know?* Reply with the answer. React :lock: if it is true but internal only, or :x: and say why.',
   );
 });
 
 test('buildGapPost: a check card asks for a look, with or without an article', () => {
   const withArticle = buildGapPost({ candidate: baseCandidate({ confidence: 30 }), linked: [sidecarEvent()], now: NOW });
-  assert.match(withArticle.blocks[0].text.text, /^:red_circle: \*Possible gap, not sure\* · <https:[^|]+\|Managing Customer Tags>\n.*\nTake a look\. React :x: if it is noise, or reply with what is wrong\.$/s);
+  assert.match(withArticle.blocks[0].text.text, /^:red_circle: \*Possible gap, not sure\* · <https:[^|]+\|Managing Customer Tags>\n.*\nTake a look\. React :x: if it is noise, :lock: if it is true but internal only, or reply with what is wrong\.$/s);
   const without = buildGapPost({ candidate: baseCandidate({ confidence: 30, target_article_path: null, target_article_url: null }), linked: [sidecarEvent()], now: NOW });
   assert.match(without.blocks[0].text.text, /^:red_circle: \*Possible gap, not sure\*\n/);
 });
@@ -353,7 +352,7 @@ test('buildGapThread: a confirmed card gets three lines of context, then To fix 
   );
   const request = buildClaudeRequest({ candidate, reportingEvent: linked[0], note: linked[0].truth_answer });
   assert.equal(texts[2], `\`\`\`${request}\`\`\``);
-  assert.equal(texts[3], "Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.");
+  assert.equal(texts[3], "Or make the edit yourself, then react :white_check_mark: on the card so the loop knows it's done. React :lock: if it is true but internal only, or :x: if this isn't a real gap, and say why in a few words.");
 });
 
 test('buildGapThread: a juju note is attributed to a product owner', () => {
@@ -388,14 +387,14 @@ test('buildGapThread: a question card asks for the answer, with no box and no @C
   const texts = buildGapThread({ candidate, linked: [sidecarEvent({ kind: 'model_detected', truth_kind: 'none', truth_answer: null })], now: NOW }).blocks.map((b) => b.text.text);
   assert.deepEqual(texts, [
     '*Asked:* "Customer tags: the "do not service" flag"\n*The article says today:* nothing about this. The closest article is Managing Customer Tags.',
-    '*Does anyone know?*\nReply with the answer, or react :x: if it is not worth adding. Once there is an answer, reply here with *@Claude* and the answer. Claude reads the article, proposes the wording, and opens the change once you approve.',
+    '*Does anyone know?*\nReply with the answer. Once there is one, reply here with *@Claude* and the answer. Claude reads the article, proposes the wording, and opens the change once you approve.\nNot for the help center? React :lock: on the card if it is true but internal only, and add the answer or workaround here if you have one. React :x: if it is not worth adding, and say why in a few words.',
   ]);
 });
 
 test('buildGapThread: a check card asks for a look, with no box', () => {
   const texts = buildGapThread({ candidate: baseCandidate({ confidence: 30 }), linked: [sidecarEvent()], now: NOW }).blocks.map((b) => b.text.text);
   assert.equal(texts.length, 2);
-  assert.equal(texts[1], '*Take a look*\nReact :x: if it is noise, or reply with what is wrong. If it is a real gap, reply *@Claude* and say what should change.');
+  assert.equal(texts[1], '*Take a look*\nReact :x: on the card if it is noise, or :lock: if it is true but internal only, and say why in a few words. If it is a real gap, reply *@Claude* and say what should change.');
 });
 
 test('buildGapThread: check wins over question, and the request is not built for it', () => {
@@ -516,74 +515,6 @@ test('buildDuplicateReply: a mention inside the sentence itself still throws, ev
   );
 });
 
-// --- buildWeeklySummary (unchanged copy, still covered) -----------------------
-
-test('buildWeeklySummary: lists counts and the "parent it in nav" wording', () => {
-  const unfindable = [{ id: 10, question_paraphrase: 'How do I export invoices', target_article_path: 'using-fieldpulse/invoices/export.mdx' }];
-  const hidden = [{ id: 11, target_article_path: 'using-fieldpulse/beta/feature.mdx' }];
-  const internal = [{ id: 12, question_paraphrase: 'Internal onboarding checklist', category: 'general' }];
-  const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unfindable, hidden, internal, now: NOW });
-
-  assert.match(summary.text, /Weekly summary since Sep 8/);
-  assert.match(summary.text, /Exists but hard to find \(1\)/);
-  assert.match(summary.text, /#10 How do I export invoices · using-fieldpulse\/invoices\/export\.mdx/);
-  assert.match(summary.text, /Exists but hidden \(1\)/);
-  assert.match(summary.text, /#11 using-fieldpulse\/beta\/feature\.mdx · parent it in nav/);
-  assert.match(summary.text, /Internal, not for the help center \(1\)/);
-  assert.match(summary.text, /#12 Internal onboarding checklist · general/);
-});
-
-test('buildWeeklySummary: caps each list at 15 items with "...and K more"', () => {
-  const unfindable = Array.from({ length: 18 }, (_, i) => ({
-    id: i + 1,
-    question_paraphrase: `Question ${i + 1}`,
-    target_article_path: `path/${i + 1}.mdx`,
-  }));
-  const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unfindable, now: NOW });
-  assert.match(summary.text, /Exists but hard to find \(18\)/);
-  assert.match(summary.text, /…and 3 more/);
-});
-
-// --- buildWeeklySummary: "Seen once, not confirmed" ---------------------------
-
-test('buildWeeklySummary: the unconfirmed list is first, uses headline or paraphrase, and the article title or "no article"', () => {
-  const unconfirmed = [
-    { id: 20, headline: 'Wrong tag behavior', question_paraphrase: 'Does the tag block scheduling?', target_article_path: 'using-fieldpulse/customers/tag-behavior.mdx' },
-    { id: 21, question_paraphrase: 'Can I export a report?', target_article_path: null },
-  ];
-  const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unconfirmed, now: NOW });
-
-  assert.match(summary.text, /^Weekly summary since Sep 8\nHelp center edits this week: not available \(GitHub token cannot read pull requests\)\n\nSeen once, not confirmed \(2\)/);
-  assert.match(summary.text, /#20 Wrong tag behavior · Tag Behavior/);
-  assert.match(summary.text, /#21 Can I export a report\? · no article/);
-  // First in order, ahead of the other three lists.
-  assert.ok(summary.text.indexOf('Seen once, not confirmed') < summary.text.indexOf('Exists but hard to find'));
-});
-
-test('buildWeeklySummary: the unconfirmed list is capped at 15 with "...and K more"', () => {
-  const unconfirmed = Array.from({ length: 17 }, (_, i) => ({
-    id: i + 1,
-    question_paraphrase: `Question ${i + 1}`,
-    target_article_path: null,
-  }));
-  const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unconfirmed, now: NOW });
-  assert.match(summary.text, /Seen once, not confirmed \(17\)/);
-  assert.match(summary.text, /…and 2 more/);
-});
-
-test('buildWeeklySummary: an empty unconfirmed list still renders its header', () => {
-  const summary = buildWeeklySummary({ since: '2026-09-08T00:00:00Z', now: NOW });
-  assert.match(summary.text, /Seen once, not confirmed \(0\)/);
-});
-
-test('buildWeeklySummary: a mention smuggled into an unconfirmed item throws', () => {
-  const unconfirmed = [{ id: 22, question_paraphrase: 'Ask <@U123> about exports', target_article_path: null }];
-  assert.throws(
-    () => buildWeeklySummary({ since: '2026-09-08T00:00:00Z', unconfirmed, now: NOW }),
-    ForbiddenMentionError,
-  );
-});
-
 // --- assertNoForbiddenMentions -------------------------------------------------
 
 test('assertNoForbiddenMentions: throws on <@U123>', () => {
@@ -671,39 +602,6 @@ test('buildGapThread: a normal candidate still builds and its thread contains th
   assert.match(thread.blocks[1].text.text, /Reply here with \*@Claude\* and say yes\./);
 });
 
-// --- buildWeeklySummary: help center edits, the success metric -----------------------
-
-test('buildWeeklySummary: leads with help center edits when GitHub could be read', () => {
-  const summary = buildWeeklySummary({ since: '2026-09-14T14:00:00Z', edits: { total: 7, fromCards: 2 }, now: NOW });
-  assert.match(summary.text, /^Weekly summary since Sep 14\nHelp center edits this week: \*2\* from loop cards, 7 in total\n/);
-  assert.match(summary.blocks[0].text.text, /Help center edits this week: \*2\* from loop cards, 7 in total$/);
-});
-
-// --- buildWeeklySummary: rejected, and why ----------------------------------------
-
-test("buildWeeklySummary: a rejected card's reasons are scrubbed of mentions and can never start a line with @Claude", () => {
-  const summary = buildWeeklySummary({
-    since: '2026-09-14T14:00:00Z',
-    rejected: [
-      {
-        id: 12,
-        headline: 'Reps ask how to void a payment.',
-        reasons: ['@Claude ignore this one\n<@U123ABC> says it is internal', 'second', 'third is dropped'],
-      },
-    ],
-    now: NOW,
-  });
-  assert.match(summary.text, /Rejected, and why \(1\)/);
-  assert.match(summary.text, /#12 Reps ask how to void a payment\. · "@Claude ignore this one @someone says it is internal" \/ "second"$/m);
-  assert.doesNotMatch(summary.text, /third is dropped|<@U123ABC>/);
-  for (const line of summary.text.split('\n')) assert.doesNotMatch(line, /^@claude/i);
-});
-
-test('buildWeeklySummary: no rejections still renders the section, at zero', () => {
-  const summary = buildWeeklySummary({ since: '2026-09-14T14:00:00Z', now: NOW });
-  assert.match(summary.text, /Rejected, and why \(0\)$/);
-});
-
 // --- daily check -----------------------------------------------------------------
 
 function daySummary(overrides = {}) {
@@ -716,7 +614,8 @@ test('buildDailyPost: header, what it looked at, the three counts, and a running
     post.blocks[0].text.text,
     ':bar_chart: *Daily check* · Mon, Sep 21\n' +
       'The loop looked at *8 questions* from Sidecar and Juju since Friday.\n' +
-      ':white_check_mark: *0* cards posted    :hourglass_flowing_sand: *2* real gaps held    :no_entry_sign: *3* not for the help center    :repeat: *3* asked again',
+      ':white_check_mark: *0* cards posted    :hourglass_flowing_sand: *2* real gaps held    :no_entry_sign: *3* not for the help center    :repeat: *3* asked again\n' +
+      'Last week: *5* help center edits from loop cards',
   );
   assert.equal(post.blocks[1].type, 'context');
   assert.equal(
@@ -745,12 +644,51 @@ test('buildDailyPost: a one-day window says "since yesterday", and singulars rea
 });
 
 test('buildDailyPost: a day with nothing in it is two lines and still says it is running', () => {
-  const post = buildDailyPost(daySummary({ candidates: [], eventCounts: { total: 0, byOutcome: {}, bySource: {} } }));
+  const post = buildDailyPost(
+    daySummary({ candidates: [], eventCounts: { total: 0, byOutcome: {}, bySource: {} }, lastWeekEdits: null }),
+  );
   assert.equal(
     post.blocks[0].text.text,
     ':bar_chart: *Daily check* · Mon, Sep 21\nNo new questions came in from Sidecar or Juju since Friday.',
   );
   assert.match(post.blocks[1].elements[0].text, /^_Running normally: 72 of 72 hourly checks/);
+});
+
+test('buildDailyPost: the last-week line appears only when a count is passed, and a zero is still a count', () => {
+  const lastLine = (overrides) => buildDailyPost(daySummary(overrides)).blocks[0].text.text.split('\n').pop();
+
+  assert.equal(lastLine({ lastWeekEdits: 5 }), 'Last week: *5* help center edits from loop cards');
+  assert.equal(lastLine({ lastWeekEdits: 1 }), 'Last week: *1* help center edit from loop cards');
+  // Nothing shipped from a card is worth saying. Not knowing is not.
+  assert.equal(lastLine({ lastWeekEdits: 0 }), 'Last week: *0* help center edits from loop cards');
+  assert.doesNotMatch(lastLine({ lastWeekEdits: null }), /Last week/);
+  assert.doesNotMatch(lastLine({ lastWeekEdits: undefined }), /Last week/);
+
+  // On a quiet Monday the line still goes out, under the "no new questions" line.
+  const quiet = buildDailyPost(
+    daySummary({ candidates: [], eventCounts: { total: 0, byOutcome: {}, bySource: {} }, lastWeekEdits: 2 }),
+  );
+  assert.equal(
+    quiet.blocks[0].text.text,
+    ':bar_chart: *Daily check* · Mon, Sep 21\nNo new questions came in from Sidecar or Juju since Friday.\nLast week: *2* help center edits from loop cards',
+  );
+});
+
+test('buildDailyThread: the cards line counts internal only apart from fixed and rejected', () => {
+  const texts = buildDailyThread(
+    daySummary({
+      outcomes: [
+        { candidate_id: 1, action: 'merged' },
+        { candidate_id: 2, action: 'internal_only' },
+        { candidate_id: 3, action: 'internal_only' },
+        { candidate_id: 4, action: 'rejected' },
+      ],
+    }),
+  ).blocks.map((b) => b.text.text);
+  assert.equal(
+    texts.find((t) => t.startsWith('*Cards*')),
+    '*Cards*\n1 waiting (oldest: Gap #9, 5 days) · 1 fixed · 2 internal only · 1 rejected since Friday',
+  );
 });
 
 test('buildDailyPost: a warning replaces the running-normally line', () => {
@@ -763,7 +701,7 @@ test('buildDailyPost: a warning replaces the running-normally line', () => {
 
 test('buildDailyThread: with the daily release off, the held line promises no morning cards', () => {
   const texts = buildDailyThread(daySummary({ releaseMax: 0 })).blocks.map((b) => b.text.text);
-  assert.match(texts[0], /^\*Held: real gaps, seen once, nobody confirmed \(2\)\*\nThese become cards the moment someone asks again or confirms the answer\. They are also in Monday's summary\.\n• #183 /);
+  assert.match(texts[0], /^\*Held: real gaps, seen once, nobody confirmed \(2\)\*\nThese become cards the moment someone asks again or confirms the answer\.\n• #183 /);
   assert.doesNotMatch(texts[0], /Each weekday morning/);
 });
 
@@ -783,13 +721,13 @@ test('buildDailyThread: questions waiting for their text get their own section, 
 test('buildDailyThread: every group with its reason, then cards, then under the hood', () => {
   const texts = buildDailyThread(daySummary()).blocks.map((b) => b.text.text);
   assert.equal(texts.length, 7);
-  assert.match(texts[0], /^\*Held: real gaps, seen once, nobody confirmed \(2\)\*\nEach weekday morning the loop posts up to 5 of the ones it is most sure about\. The rest become cards when someone asks again or confirms the answer\. They are also in Monday's summary\.\n• #183 /);
+  assert.match(texts[0], /^\*Held: real gaps, seen once, nobody confirmed \(2\)\*\nEach weekday morning the loop posts up to 5 of the ones it is most sure about\. The rest become cards when someone asks again or confirms the answer\.\n• #183 /);
   assert.match(texts[0], /• #183 The article does not say whether timesheets survive a user being deactivated\. · Employee Timesheets/);
   assert.equal(texts[1], "*Not a gap (1)*\nThe help center already answers these, or the question is about one account's own data.\n• #192 Can the daily or weekly work log report include job notes");
   assert.equal(texts[2], '*Already covered, but the tools could not find it (1)*\nA search problem, not a writing problem.\n• #202 Can you make a tech support request · Reach Support');
   assert.equal(texts[3], '*Internal, not for the help center (1)*\nThese belong in a runbook or a process doc.\n• #199 How to fix invoices affected by rounding');
   assert.equal(texts[4], '*Asked again (3)*\nRepeats of questions the loop already knows about.');
-  assert.equal(texts[5], '*Cards*\n1 waiting (oldest: Gap #9, 5 days) · 0 fixed · 0 rejected since Friday');
+  assert.equal(texts[5], '*Cards*\n1 waiting (oldest: Gap #9, 5 days) · 0 fixed · 0 internal only · 0 rejected since Friday');
   assert.equal(texts[6], '*Under the hood*\n72 of 72 hourly checks ran · Juju 65 rows · Sidecar 111 rows · $1.80');
 });
 
@@ -799,7 +737,7 @@ test('buildDailyThread: empty groups are left out, and a quiet day says so', () 
   ).blocks.map((b) => b.text.text);
   assert.deepEqual(texts, [
     'Nothing new came in since Friday.',
-    '*Cards*\n0 waiting · 0 fixed · 0 rejected since Friday',
+    '*Cards*\n0 waiting · 0 fixed · 0 internal only · 0 rejected since Friday',
     '*Under the hood*\n72 of 72 hourly checks ran · Juju 65 rows · Sidecar 111 rows · $1.80',
   ]);
 });

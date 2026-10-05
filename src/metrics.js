@@ -11,6 +11,7 @@ export const METRIC_COLUMNS = [
   'hc_edits_total',
   'cards_posted',
   'cards_fixed',
+  'cards_internal_only',
   'cards_rejected',
   'cards_waiting',
   'gaps_held',
@@ -44,6 +45,7 @@ export function weeklyRow({ since, until, candidates = [], actions = [], runs = 
   const merges = prs ? countMerges(prs, { since: from, until: to }) : null;
 
   const fixedIds = new Set(acted.filter((a) => a.action === 'adopted' || a.action === 'merged').map((a) => a.candidate_id));
+  const internalOnlyIds = new Set(acted.filter((a) => a.action === 'internal_only').map((a) => a.candidate_id));
   const rejectedIds = new Set(acted.filter((a) => a.action === 'rejected').map((a) => a.candidate_id));
 
   return {
@@ -52,6 +54,7 @@ export function weeklyRow({ since, until, candidates = [], actions = [], runs = 
     hc_edits_total: merges ? merges.total : null,
     cards_posted: ran.reduce((n, r) => n + (Number(r.cards_posted) || 0), 0),
     cards_fixed: fixedIds.size,
+    cards_internal_only: internalOnlyIds.size,
     cards_rejected: rejectedIds.size,
     cards_waiting: waiting.length,
     // A gap the daily release let through was held first. Counting only the

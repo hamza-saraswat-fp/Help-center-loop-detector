@@ -46,8 +46,8 @@ priority both have to match what's written here.
 - `NEEDS_EDIT` → **P3**
 - `HIDDEN` → **P2**
 
-`UNFINDABLE` and `HIDDEN` are logged and summarized weekly rather than
-posted as individual docs requests, see Routing.
+`UNFINDABLE` and `HIDDEN` are logged rather than posted as individual
+docs requests, see Routing.
 
 ## Card format
 
@@ -63,8 +63,11 @@ There are three kinds of card, decided by `cardKind` in
 | Kind | When | The ask |
 | --- | --- | --- |
 | Confirmed change | A rep or product owner gave the right answer, and the loop is at least 40% sure | "Want this changed? Reply here with @Claude and say yes." |
-| Needs an answer | A real gap, but nobody has confirmed the truth (`needs_answer`) | "Does anyone know? Reply with the answer, or react :x:." |
-| Possible gap, not sure | Confidence below 40 | "Take a look. React :x: if it is noise." |
+| Needs an answer | A real gap, but nobody has confirmed the truth (`needs_answer`) | "Does anyone know? Reply with the answer." |
+| Possible gap, not sure | Confidence below 40 | "Take a look." |
+
+Every card ends the same way: react :lock: if it is true but internal
+only, or :x: and say why. See "Three ways a card ends" below.
 
 A low-confidence gap is a "not sure" card even when nobody has answered
 it: it gets a look before anyone is asked to answer.
@@ -74,7 +77,7 @@ The channel post, for a confirmed change (candidate #9, card fee recovery):
 ```
 :red_circle: *<https://help.fieldpulse.com/using-fieldpulse/payments/start-here/card-fee-recovery|Card Fee Recovery>*
 The article says the card fee is typically 3%. A rep confirmed it is 4%.
-Want this changed? Reply here with *@Claude* and say yes. React :x: if not.
+Want this changed? Reply here with *@Claude* and say yes. React :lock: if it is true but internal only, or :x: and say why.
 
 Reported by a Tech Support rep in Sidecar · Sep 3 · Gap #9 · <https://project-sidecar.vercel.app/admin/all/activity/c/feaf65b0-e818-4c34-b10d-1f9fe22c15bf|See the rep's conversation>
 ```
@@ -91,7 +94,7 @@ Reply here with *@Claude* and say yes. Claude reads the article, proposes the wo
 
 ```Gap #9. Article: using-fieldpulse/payments/start-here/card-fee-recovery.mdx. Someone asked: "What percentage does card fee recovery add for credit card payments, and for ACH?" A Tech Support rep wrote: "CFR adds 4% fee not 3%". Propose the fix.```
 
-Or make the edit yourself, then react :white_check_mark: here so the loop knows it's done. React :x: if this isn't a real gap.
+Or make the edit yourself, then react :white_check_mark: on the card so the loop knows it's done. React :lock: if it is true but internal only, or :x: if this isn't a real gap, and say why in a few words.
 ````
 
 This is exactly what `buildGapPost` and `buildGapThread` produce for a
@@ -151,9 +154,9 @@ not somebody asking again. It is still recorded and still counts toward
 `INCORRECT`, `MISSING`, and `NEEDS_EDIT` destined for the help center post
 as individual gap posts to the live Slack channel (or the shadow channel
 outside live mode). `UNFINDABLE` and `HIDDEN` are never posted as
-individual docs requests, they're logged and rolled into the weekly
-summary instead, since neither one is a "go fix an article" request in the
-usual sense. Candidates destined for `internal` route to the appropriate
+individual docs requests, they're logged and counted in the daily check
+instead, since neither one is a "go fix an article" request in the usual
+sense. Candidates destined for `internal` route to the appropriate
 category owner; events with no existing answer (`needs_answer`) get the
 same post and thread, labeled "needs an answer" instead of being routed
 anywhere separately. Shipping a fix means replying `@Claude` in the post's
@@ -165,8 +168,8 @@ edit yourself and react :white_check_mark:.
 A gap with a human-confirmed answer still posts immediately, exactly as
 above. A gap nobody has confirmed an answer for is held on its first
 sighting: it is logged with `evidence.hold_reason: 'unconfirmed_single'`
-and shows up in the weekly summary's "Seen once, not confirmed" list
-instead of a card. It posts at once if it is seen again.
+and is listed in that day's daily check thread instead of getting a card.
+It posts at once if it is seen again.
 
 **The daily release.** Waiting for a second sighting is not enough on its
 own. Support questions are long-tail, so most real gaps are asked once: on
@@ -189,7 +192,7 @@ needs-answer cards. Unset or `0` is off. `pickReleases` in
 
 A released gap has `evidence.released` (`at`, `by: 'daily_release'`) in
 place of `hold_reason`, and is a normal card from then on. Gaps that are
-not released stay held and stay in the Monday list. To see what the next
+not released stay held. To see what the next
 batch would be without changing anything:
 `node scripts/preview-release.js --max=5`.
 
@@ -251,19 +254,56 @@ the docs repo's own rules file, where they are versioned.
 misclassified verdict, something that is not a gap at all): the correction
 belongs in this manual and in the `gap_check` prompt files under
 `prompts/`, never only in a reply in the Slack thread. The loop records what
-people write in a card's thread and lists the reasons for rejected cards in
-the Monday summary, but it does not act on them: a detection correction
+people write in a card's thread, and `npm run decisions` prints it beside
+each closed card, but it does not act on them: a detection correction
 that lives only in a thread helps exactly one candidate and is gone the
 next time the same gap resurfaces from a different source. Treat a
 recurring one as a signal that the manual or the prompt is out of date, and
 update it before moving on.
 
+## Three ways a card ends
+
+| Reaction | Means | Recorded as |
+| --- | --- | --- |
+| :white_check_mark: | Fixed. Somebody made the edit by hand. (A change shipped through Claude is recorded from its pull request instead.) | action `adopted`, status `adopted` |
+| :lock: | True, but internal only. The gap is real and does not belong in the public help center: a limitation, a product gap. | action `internal_only`, status `rejected` |
+| :x: | Not worth adding, already covered, or not a gap. The card asks for a few words on why. | action `rejected`, status `rejected` |
+
+The lock exists because of the first week: 25 of 30 cards got an x, and the
+help center writers explained that much of it was true but not something
+the public help center should say. That knowledge is worth keeping, so it
+gets its own ending instead of being thrown away with the noise.
+
+- **Order.** When a card carries more than one at the same poll, the check
+  mark wins, then the lock, then the x. `:closed_lock_with_key:` counts as
+  a lock.
+- **Final.** Only `posted` cards are polled, so a decision is final once the
+  hourly run has read it. A lock added to a card that was already rejected
+  is never seen.
+- **Status.** An internal-only card shares status `rejected` on purpose:
+  its reworded twin must not be released again, and its thread is still
+  read, and both of those already key off `rejected`. The action row is
+  what tells the two apart, and it is what every report counts.
+- **What people write.** Replies under a closed card are still recorded for
+  30 days: the reason for an x, the answer or workaround on a lock.
+
+`npm run decisions` prints one row per closed card with its decision, who
+made it, the article, the gap, and what people wrote. With
+`-- --only=internal` it is the internal-only list alone: what the customer
+was trying to do, and the answer or workaround the writers gave. Where that
+list should live for Juju, Sidecar and Mav to read is not decided; until
+it is, the loop's own record is the store.
+
+Migration 0011 adds the action. Apply it before the code that writes it
+runs: until then a lock fails the check constraint and the card stays open.
+
 ## What the loop reads back from Slack
 
 Three things, every run, for cards from the last 30 days:
 
-- **Reactions** on the card: :white_check_mark: is adopted, :x: is rejected
-  (`src/slack/reactions.js`).
+- **Reactions** on the card: :white_check_mark: is adopted, :lock: is
+  internal only, :x: is rejected (`src/slack/reactions.js`). See "Three
+  ways a card ends".
 - **Replies people write in the card's thread** (`src/slack/replies.js`),
   stored as `gap_actions` rows with action `human_reply` and the text in
   `note`. People only: the loop's own reply, Claude's replies, and system
@@ -398,34 +438,6 @@ The default is silent, on purpose, because a card that mentions everyone by
 default is exactly the pattern that got ignored the last time it was tried
 elsewhere.
 
-## Weekly summary
-
-Once a week, the first run after 14:00 UTC on a Monday (and only if the
-last summary went out more than six days ago, so a run that slips by an
-hour doesn't skip a week), the loop posts one digest card instead of
-individual candidate cards for four buckets that never get their own, and
-a fifth list of what was rejected:
-
-- **Seen once, not confirmed**: a gap nobody has confirmed an answer for
-  yet, held rather than posted after its first sighting (see Routing
-  above). It lists first, since it's usually the largest bucket. A gap the
-  daily release has let through is a card, so it is no longer listed here.
-- **`UNFINDABLE`**: content that already exists and is correct, but search
-  couldn't surface it.
-- **`HIDDEN`**: content that exists but is hidden from every tool, listed
-  as "exists but hidden: `<path>`, parent it in nav," since un-hiding an
-  article means a nav change, and nav is a protected surface that needs
-  Evan, not a docs edit anyone can just paste into `#mintlify-admin`.
-- **`internal`**: candidates whose real home is an internal process doc or
-  runbook, not the public help center at all.
-- **Rejected, and why**: every card that got an :x: since the last summary,
-  with up to two things people wrote in its thread, or "no reason given".
-  This is the list to read for detection mistakes: the same reason showing
-  up twice means the `gap_check` prompt or a shortcut rule needs a change.
-
-`buildWeeklySummary` in `src/slack/blocks.js` builds this card; `src/run.js`
-decides when it's due and what window it covers.
-
 ## Daily check
 
 Every weekday, on the first run at or after 14:00 UTC (9 AM Central), the
@@ -447,6 +459,7 @@ The post:
 :bar_chart: *Daily check* · Mon, Sep 21
 The loop looked at *8 questions* from Sidecar and Juju since Friday.
 :white_check_mark: *0* cards posted    :hourglass_flowing_sand: *2* real gaps held    :no_entry_sign: *3* not for the help center    :repeat: *3* asked again
+Last week: *5* help center edits from loop cards
 _Running normally: 72 of 72 hourly checks, no errors · 1 card waiting · details in the thread_ :arrow_down:
 ```
 
@@ -454,7 +467,7 @@ Its thread reply:
 
 ```
 *Held: real gaps, seen once, nobody confirmed (2)*
-Each weekday morning the loop posts up to 5 of the ones it is most sure about. The rest become cards when someone asks again or confirms the answer. They are also in Monday's summary.
+Each weekday morning the loop posts up to 5 of the ones it is most sure about. The rest become cards when someone asks again or confirms the answer.
 • #183 The article does not say whether timesheets survive a user being deactivated. · Employee Timesheets
 • #186 Reps ask whether the invoice title is included in the export. The article does not say. · Exporting Estimates Invoices
 
@@ -474,7 +487,7 @@ These belong in a runbook or a process doc.
 Repeats of questions the loop already knows about.
 
 *Cards*
-1 waiting (oldest: Gap #9, 5 days) · 0 fixed · 0 rejected since Friday
+1 waiting (oldest: Gap #9, 5 days) · 0 fixed · 0 internal only · 0 rejected since Friday
 
 *Under the hood*
 72 of 72 hourly checks ran · Juju 65 rows · Sidecar 111 rows · $1.80
@@ -517,10 +530,11 @@ next window starts.
 ## What the loop is measured by
 
 Help center edits, not gaps surfaced. A gap count is easy to inflate; a
-merged change to the help center is not. So the Monday summary opens with
-the week's edits, split into those that came from a loop card (the PR names
-`Gap #<n>`) and all merges on the docs repo, and `npm run metrics` prints the
-same numbers as one row for the team scorecard:
+merged change to the help center is not. So Monday's daily check carries
+one extra line, "Last week: N help center edits from loop cards" (a PR
+counts when it names `Gap #<n>`), for the previous calendar week, Monday to
+Monday UTC. `npm run metrics` prints the same number, beside all merges on
+the docs repo, as one row for the team scorecard:
 
 ```
 npm run metrics                     # last full week
@@ -528,12 +542,17 @@ npm run metrics -- --week=2026-09-15
 npm run metrics -- --weeks=4        # one line per week
 ```
 
-Columns: week, edits from cards, edits total, cards posted, fixed, rejected,
-waiting, gaps held, questions checked, cost. Both edits columns read `n/a`,
-and the Monday line says "not available", until the loop's GitHub token has
-"Pull requests: read" on the docs repo; today it has metadata only, so the
-PR poller and this read both get HTTP 403. `src/metrics.js` does the
-arithmetic, `src/github/merges.js` the one GitHub read.
+Columns: week, edits from cards, edits total, cards posted, fixed,
+internal only, rejected, waiting, gaps held, questions checked, cost. The
+loop's GitHub token has had "Pull requests: read" on the docs repo since
+2026-09-23. If GitHub ever refuses the read, both edits columns say `n/a`
+and Monday's line is left out, rather than showing a zero that is not
+true. `src/metrics.js` does the arithmetic, `src/github/merges.js` the one
+GitHub read.
+
+There is no weekly summary post. It ran to 55 lines by its third week and
+was removed on 2026-10-05; the one number worth keeping moved to Monday's
+daily check.
 
 ## Status lifecycle
 
@@ -555,16 +574,17 @@ new -----> posted -----> adopted
   the daily release picks it.
 - **`logged`**: a candidate that never gets a card of its own, `NOT_A_GAP`,
   `UNFINDABLE`, `HIDDEN`, a shortcut ("data lookup"), or anything not
-  destined for the help center. Recorded for the weekly summary and for
+  destined for the help center. Recorded for the daily check and for
   volume visibility, nothing more.
 - **`posted`**: its card went out to Slack. Recorded as a `posted` (or
   `owner_pinged`, for needs-answer cards) action.
-- **`adopted` / `rejected`**: a human reacted to the posted card with
-  ✅ or ❌. `pollReactions` (`src/slack/reactions.js`) checks every
-  `posted` candidate's reactions each run and records whichever came first;
-  adoption wins if both are somehow present. The bot's own reactions never
-  count, and when `SLACK_REACTION_USER_IDS` is set, only those users'
-  reactions do.
+- **`adopted` / `rejected`**: a human reacted to the posted card.
+  `pollReactions` (`src/slack/reactions.js`) checks every `posted`
+  candidate's reactions each run. A check mark is `adopted`. A lock or an x
+  both close the card as `rejected`, and the `gap_actions` row says which:
+  `internal_only` or `rejected`. See "Three ways a card ends". The bot's
+  own reactions never count, and when `SLACK_REACTION_USER_IDS` is set,
+  only those users' reactions do.
 - **`pr_open`**: a real GitHub pull request against the docs repo mentions
   `candidate #<id>` in its title or body. `pollPrs` (`src/github/prs.js`)
   polls the docs repo's PRs each run and matches that reference back to the

@@ -33,7 +33,8 @@ const SIDECAR_ROWS = JSON.parse(readFileSync(path.join(FIXTURES_DIR, 'events', '
 // A Wednesday, comfortably after every fixture event and after fixture 5001's
 // 24h hold expires — so nothing is held unless a test says so.
 const NOW = new Date('2026-09-16T12:00:00.000Z');
-// A Monday, 14:30 UTC: the weekly summary's window.
+// A Monday, 14:30 UTC: inside the daily check's window, on the one day it
+// carries last week's edits.
 const MONDAY = new Date('2026-09-21T14:30:00.000Z');
 
 const EPOCH = '1970-01-01T00:00:00Z';
@@ -1011,7 +1012,7 @@ test('the finishRun payload never carries a key that is not a loop_runs column',
   const KNOWN_COLUMNS = new Set([
     'id', 'started_at', 'finished_at', 'mode', 'git_sha', 'docs_sha',
     'events_pulled', 'events_by_source', 'candidates_new', 'duplicates',
-    'held', 'cards_posted', 'checks_failed', 'cost_usd', 'summary_posted', 'errors',
+    'held', 'cards_posted', 'checks_failed', 'cost_usd', 'errors',
   ]);
   for (const key of Object.keys(runRow)) {
     assert.ok(KNOWN_COLUMNS.has(key), `unexpected key ${key} in the loop_runs payload`);
@@ -1292,106 +1293,6 @@ test('--dry-run wins over a live HC_LOOP_MODE', async () => {
   assert.equal(repos.state.candidates.length, 0);
 });
 
-// --- weekly summary --------------------------------------------------------
-
-// A Monday run past 14:00 UTC also posts the daily check (tested further
-// down), so these tests pick out the weekly summary rather than counting
-// every post.
-function weeklyPosts(poster) {
-  return poster.posts.filter((p) => /^Weekly summary/.test(p.card.text));
-}
-
-function weeklySeed() {
-  const base = {
-    fingerprint_terms: [],
-    needs_answer: false,
-    event_count: 1,
-    first_seen: '2026-09-18T00:00:00.000Z',
-    last_seen: '2026-09-18T00:00:00.000Z',
-    created_at: '2026-09-18T00:00:00.000Z',
-    status: 'logged',
-  };
-  return {
-    candidates: [
-      { ...base, id: 1, fingerprint: 'fp-1', category: 'using-fieldpulse', destination: 'help_center', verdict: 'UNFINDABLE', question_paraphrase: 'Hard to find', target_article_path: 'a.mdx' },
-      { ...base, id: 2, fingerprint: 'fp-2', category: 'using-fieldpulse', destination: 'help_center', verdict: 'HIDDEN', question_paraphrase: 'Hidden', target_article_path: 'b.mdx' },
-      { ...base, id: 3, fingerprint: 'fp-3', category: 'general', destination: 'internal', verdict: 'MISSING', question_paraphrase: 'Internal only' },
-      { ...base, id: 4, fingerprint: 'fp-4', category: 'general', destination: 'help_center', verdict: 'UNFINDABLE', question_paraphrase: 'Too old', created_at: '2026-08-01T00:00:00.000Z', target_article_path: 'c.mdx' },
-    ],
-  };
-}
-
-test('the weekly summary posts on a Monday afternoon when none went out this week', async () => {
-  const { run, poster, repos } = harness({ now: () => MONDAY, seed: weeklySeed() });
-
-  const { stats } = await run(args());
-
-  const [weekly, ...rest] = weeklyPosts(poster);
-  assert.equal(rest.length, 0);
-  assert.match(weekly.card.text, /^Weekly summary since/);
-  assert.match(weekly.card.text, /Exists but hard to find \(1\)/);
-  assert.match(weekly.card.text, /Exists but hidden \(1\)/);
-  assert.match(weekly.card.text, /Internal, not for the help center \(1\)/);
-  assert.equal(stats.summary_posted, true);
-  assert.equal(repos.state.runs[0].summary_posted, true);
-});
-
-test('the weekly summary leads with help center edits when GitHub can be read, and says so when it cannot', async () => {
-  const withPrs = harness({
-    now: () => MONDAY,
-    seed: weeklySeed(),
-    fetchMerges: async () => [
-      { merged_at: '2026-09-18T10:00:00.000Z', title: 'Gap #9 card fee', body: '' },
-      { merged_at: '2026-09-19T10:00:00.000Z', title: 'SEO', body: '' },
-    ],
-  });
-  await withPrs.run(args());
-  assert.match(weeklyPosts(withPrs.poster)[0].card.text, /Help center edits this week: \*1\* from loop cards, 2 in total/);
-
-  const without = harness({ now: () => MONDAY, seed: weeklySeed(), fetchMerges: async () => null });
-  await without.run(args());
-  assert.match(weeklyPosts(without.poster)[0].card.text, /Help center edits this week: not available/);
-});
-
-test('the weekly summary does not post twice in one week, nor off-Monday', async () => {
-  const seed = weeklySeed();
-  const recent = harness({
-    now: () => MONDAY,
-    seed: {
-      ...seed,
-      runs: [
-        {
-          id: 1,
-          mode: 'live',
-          started_at: '2026-09-19T14:00:00.000Z',
-          finished_at: '2026-09-19T14:05:00.000Z',
-          summary_posted: true,
-          errors: [],
-        },
-      ],
-    },
-  });
-  await recent.run(args());
-  assert.equal(weeklyPosts(recent.poster).length, 0, 'a summary went out two days ago');
-
-  const wednesday = harness({ now: () => NOW, seed: weeklySeed() });
-  await wednesday.run(args());
-  assert.equal(wednesday.poster.posts.length, 0, 'not a Monday');
-
-  const morning = harness({ now: () => new Date('2026-09-21T09:00:00.000Z'), seed: weeklySeed() });
-  await morning.run(args());
-  assert.equal(morning.poster.posts.length, 0, 'before 14:00 UTC');
-});
-
-test('dry_run never posts a weekly summary', async () => {
-  const { run, poster } = harness({ now: () => MONDAY, seed: weeklySeed() });
-
-  const { stats } = await run(args({ dryRun: true }));
-
-  assert.equal(poster.posts.length, 0);
-  assert.notEqual(stats.summary_posted, true);
-});
-
 // --- daily check -------------------------------------------------------------
 
 const TUESDAY_MORNING = new Date('2026-09-22T14:04:00.000Z'); // 9:04 AM Central
@@ -1441,7 +1342,7 @@ test("Monday's daily check covers everything since Friday's", async () => {
   const { run, poster } = harness({
     now: () => new Date('2026-09-21T14:04:00.000Z'),
     seed: {
-      runs: [{ id: 1, mode: 'live', started_at: friday, finished_at: '2026-09-18T14:06:00.000Z', overview_posted: true, summary_posted: true, errors: [] }],
+      runs: [{ id: 1, mode: 'live', started_at: friday, finished_at: '2026-09-18T14:06:00.000Z', overview_posted: true, errors: [] }],
       candidates: [
         { id: 1, fingerprint: 'fp-1', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'MISSING', status: 'logged', question_paraphrase: 'Asked on Saturday', evidence: { hold_reason: 'unconfirmed_single' }, created_at: '2026-09-19T10:00:00.000Z' },
         { id: 2, fingerprint: 'fp-2', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'MISSING', status: 'logged', question_paraphrase: 'Asked before the window', evidence: { hold_reason: 'unconfirmed_single' }, created_at: '2026-09-17T10:00:00.000Z' },
@@ -1501,29 +1402,10 @@ test('the poll seams run unless --skip-poll is passed', async () => {
   await run(args({ skipPoll: true }));
   assert.deepEqual(calls, []);
 
-  // Replies first: they are read ahead of the weekly summary, which lists
-  // the reasons people gave for rejecting a card.
+  // Replies first: what people wrote under a card is read before the
+  // reactions that close it.
   await run(args({ skipPoll: false }));
   assert.deepEqual(calls, ['replies', 'reactions', 'prs']);
-});
-
-test('the weekly summary lists cards rejected this week with what people wrote in the thread', async () => {
-  const seed = weeklySeed();
-  seed.candidates.push(
-    { id: 5, fingerprint: 'fp-5', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'MISSING', status: 'rejected', question_paraphrase: 'Old card, rejected this week', headline: 'Reps ask how to void a payment.', created_at: '2026-08-20T00:00:00.000Z', slack_channel: 'C1', slack_ts: '555.1' },
-    { id: 6, fingerprint: 'fp-6', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'MISSING', status: 'rejected', question_paraphrase: 'Rejected with no reason', created_at: '2026-09-18T00:00:00.000Z', slack_channel: 'C1', slack_ts: '666.1' },
-  );
-  const { run, poster, repos } = harness({ now: () => MONDAY, seed });
-  await repos.actions.recordAction({ candidateId: 5, action: 'rejected', actor: 'U7', slackTs: '555.1' });
-  await repos.actions.recordAction({ candidateId: 5, action: 'human_reply', actor: 'U7', slackTs: '555.2', note: 'Not a gap.\nThis lives in the internal runbook.' });
-  await repos.actions.recordAction({ candidateId: 6, action: 'rejected', actor: 'U7', slackTs: '666.1' });
-
-  await run(args());
-
-  const text = poster.posts[0].card.text;
-  assert.match(text, /Rejected, and why \(2\)/);
-  assert.match(text, /#5 Reps ask how to void a payment\. · "Not a gap\. This lives in the internal runbook\."/);
-  assert.match(text, /#6 Rejected with no reason · no reason given/);
 });
 
 // --- always-on teardown ----------------------------------------------------
@@ -1570,42 +1452,6 @@ test('an always-failing event is given up on after three runs, across re-pulls',
   assert.ok(repos.state.events[0].processed_at);
 });
 
-test('the weekly summary sees this week past a backlog of older logged candidates', async () => {
-  const base = {
-    fingerprint_terms: [],
-    needs_answer: false,
-    event_count: 1,
-    status: 'logged',
-    destination: 'help_center',
-    verdict: 'UNFINDABLE',
-    category: 'general',
-    target_article_path: 'old.mdx',
-    first_seen: '2026-06-01T00:00:00.000Z',
-    last_seen: '2026-06-01T00:00:00.000Z',
-  };
-  const older = Array.from({ length: 150 }, (_, i) => ({
-    ...base,
-    id: i + 1,
-    fingerprint: `old-${i}`,
-    question_paraphrase: `Old ${i}`,
-    created_at: '2026-06-01T00:00:00.000Z',
-  }));
-  const recent = [
-    { ...base, id: 200, fingerprint: 'new-1', question_paraphrase: 'Recent unfindable', created_at: '2026-09-18T00:00:00.000Z' },
-    { ...base, id: 201, fingerprint: 'new-2', verdict: 'HIDDEN', question_paraphrase: 'Recent hidden', target_article_path: 'b.mdx', created_at: '2026-09-19T00:00:00.000Z' },
-  ];
-
-  const { run, poster } = harness({ now: () => MONDAY, seed: { candidates: [...older, ...recent] } });
-
-  const { stats } = await run(args());
-
-  assert.equal(stats.summary_posted, true);
-  assert.match(poster.posts[0].card.text, /Exists but hard to find \(1\)/);
-  assert.match(poster.posts[0].card.text, /Recent unfindable/);
-  assert.match(poster.posts[0].card.text, /Exists but hidden \(1\)/);
-  assert.equal(poster.posts[0].card.text.includes('Old 0'), false);
-});
-
 test('a needs-answer candidate with an owner_pinged action is repaired, not re-pinged', async () => {
   const { run, repos, poster } = harness({
     seed: {
@@ -1636,41 +1482,6 @@ test('a needs-answer candidate with an owner_pinged action is repaired, not re-p
   assert.equal(stats.cards_posted, 0);
   assert.equal(repos.state.candidates[0].status, 'posted');
   assert.equal(repos.state.actions.length, 1);
-});
-
-test('a weekly summary that cannot be built is recorded, not thrown', async () => {
-  const { run, poster } = harness({
-    now: () => MONDAY,
-    seed: {
-      candidates: [
-        {
-          id: 1,
-          fingerprint: 'fp-1',
-          fingerprint_terms: [],
-          category: 'general',
-          destination: 'help_center',
-          verdict: 'UNFINDABLE',
-          status: 'logged',
-          // A model-written paraphrase that smuggled in a Slack mention.
-          question_paraphrase: 'Ask <@U123> about exports',
-          target_article_path: 'a.mdx',
-          needs_answer: false,
-          event_count: 1,
-          first_seen: '2026-09-18T00:00:00.000Z',
-          last_seen: '2026-09-18T00:00:00.000Z',
-          created_at: '2026-09-18T00:00:00.000Z',
-        },
-      ],
-    },
-  });
-
-  const { exitCode, stats } = await run(args());
-
-  assert.equal(exitCode, 0);
-  assert.equal(weeklyPosts(poster).length, 0);
-  assert.notEqual(stats.summary_posted, true);
-  assert.equal(stats.errors.length, 1);
-  assert.equal(stats.errors[0].lane, 'slack');
 });
 
 test('a duplicate whose thread reply cannot be built still finishes the run', async () => {
@@ -2365,10 +2176,9 @@ function releaseHarness({ count = 7, max = 5, candidates, ...rest } = {}) {
   });
 }
 
-// Cards only. RELEASE_MORNING is a Monday, so the same run also posts the
-// weekly summary and the daily check.
+// Cards only: a run after 9 AM Central on a weekday also posts the daily check.
 function gapPosts(poster) {
-  return poster.posts.filter((p) => !/^(Daily check:|Weekly summary)/.test(p.card.text));
+  return poster.posts.filter((p) => !/^Daily check:/.test(p.card.text));
 }
 
 const statusesOf = (repos) => repos.state.candidates.map((c) => c.status);
@@ -3043,4 +2853,118 @@ test('the daily check says how many questions are waiting for their text', async
   assert.match(details, /\*Waiting for the real question \(2\)\*/);
   const post = poster.posts.find((p) => /^Daily check:/.test(p.card.text));
   assert.match(post.card.blocks[0].text.text, /No new questions came in/, 'set aside is not looked at');
+});
+
+// ---------------------------------------------------------------------------
+// Monday's daily check: last week's edits, in place of the weekly summary.
+// ---------------------------------------------------------------------------
+
+function dailyPostText(poster) {
+  return poster.posts.find((p) => /^Daily check:/.test(p.card.text))?.card.blocks[0].text.text ?? null;
+}
+
+// MONDAY is 2026-09-21. Last week is Mon Sep 14 00:00 UTC to Mon Sep 21 00:00 UTC.
+const LAST_WEEK_PRS = [
+  { merged_at: '2026-09-14T00:00:00Z', title: 'Gap #9: card fee rate', body: '' },
+  { merged_at: '2026-09-17T10:00:00Z', title: 'docs(jobs): recurring window (Gap #12)', body: '' },
+  { merged_at: '2026-09-18T10:00:00Z', title: 'Spanish wave 3', body: 'nothing to do with a card' },
+  { merged_at: '2026-09-13T23:59:00Z', title: 'Gap #3: the week before', body: '' },
+  { merged_at: '2026-09-21T00:00:00Z', title: 'Gap #20: this week already', body: '' },
+  { merged_at: null, title: 'Gap #30: closed, never merged', body: '' },
+];
+
+test("Monday's daily check carries last week's edits from loop cards, Monday to Monday", async () => {
+  const { run, poster } = harness({ now: () => MONDAY, fetchMerges: async () => LAST_WEEK_PRS });
+
+  await run(args());
+
+  assert.match(dailyPostText(poster), /\nLast week: \*2\* help center edits from loop cards$/);
+});
+
+test('a week with no edits from cards says zero, since that is known', async () => {
+  const { run, poster } = harness({ now: () => MONDAY, fetchMerges: async () => [] });
+
+  await run(args());
+
+  assert.match(dailyPostText(poster), /\nLast week: \*0\* help center edits from loop cards$/);
+});
+
+test('the last-week line is left out when GitHub cannot be read, and the daily check still posts', async () => {
+  const refused = harness({ now: () => MONDAY, fetchMerges: async () => null });
+  await refused.run(args());
+  assert.ok(dailyPostText(refused.poster), 'the daily check posted');
+  assert.doesNotMatch(dailyPostText(refused.poster), /Last week/);
+
+  const down = harness({
+    now: () => MONDAY,
+    fetchMerges: async () => {
+      throw new Error('github is down');
+    },
+  });
+  const { exitCode, stats } = await down.run(args());
+  assert.equal(exitCode, 0);
+  assert.ok(dailyPostText(down.poster), 'a GitHub failure costs one line, not the daily check');
+  assert.doesNotMatch(dailyPostText(down.poster), /Last week/);
+  assert.equal(stats.overview_posted, true);
+  assert.deepEqual(stats.errors, []);
+});
+
+test('the last-week line is Monday only, and GitHub is not asked on other days', async () => {
+  let asked = 0;
+  const { run, poster } = harness({
+    now: () => TUESDAY_MORNING,
+    fetchMerges: async () => {
+      asked += 1;
+      return LAST_WEEK_PRS;
+    },
+  });
+
+  await run(args());
+
+  assert.ok(dailyPostText(poster));
+  assert.doesNotMatch(dailyPostText(poster), /Last week/);
+  assert.equal(asked, 0);
+});
+
+test('a Monday run posts no weekly summary, and nothing else in its place', async () => {
+  const { run, poster, repos } = harness({
+    now: () => MONDAY,
+    fetchMerges: async () => LAST_WEEK_PRS,
+    seed: {
+      candidates: [
+        { id: 1, fingerprint: 'fp-1', fingerprint_terms: [], category: 'general', destination: 'help_center', verdict: 'UNFINDABLE', status: 'logged', question_paraphrase: 'Hard to find', target_article_path: 'a.mdx', evidence: {}, created_at: '2026-09-18T00:00:00.000Z' },
+      ],
+    },
+  });
+
+  const { stats } = await run(args());
+
+  assert.deepEqual(
+    poster.posts.map((p) => p.card.text.split(':')[0]),
+    ['Daily check'],
+    'the daily check is the only post',
+  );
+  assert.ok(!('summary_posted' in stats));
+  assert.ok(!('summary_posted' in repos.state.runs[0]));
+});
+
+test('the daily check counts cards marked internal only apart from rejected ones', async () => {
+  const { run, poster, repos } = harness({
+    now: () => TUESDAY_MORNING,
+    seed: {
+      runs: [{ id: 1, mode: 'live', started_at: '2026-09-21T14:04:00.000Z', finished_at: '2026-09-21T14:06:00.000Z', overview_posted: true, errors: [] }],
+    },
+  });
+  // Recorded by yesterday afternoon's reactions poll.
+  const at = '2026-09-21T20:00:00.000Z';
+  repos.state.actions.push(
+    { id: 1, candidateId: 11, action: 'internal_only', actor: 'U3', at },
+    { id: 2, candidateId: 12, action: 'internal_only', actor: 'U3', at },
+    { id: 3, candidateId: 13, action: 'rejected', actor: 'U2', at },
+  );
+
+  await run(args());
+
+  const details = poster.replies.find((p) => p.card.text === 'Daily check details').card.blocks.map((b) => b.text.text).join('\n');
+  assert.match(details, /\*Cards\*\n0 waiting · 0 fixed · 2 internal only · 1 rejected since yesterday/);
 });

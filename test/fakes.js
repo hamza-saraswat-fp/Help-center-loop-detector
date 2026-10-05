@@ -514,10 +514,6 @@ export function fakeRepos({ now = () => new Date(), seed = {} } = {}) {
       }
       return count;
     },
-    async lastSummaryAt() {
-      const posted = newestFirst(state.runs.filter((r) => r.summary_posted));
-      return posted[0]?.started_at ?? null;
-    },
     async lastOverviewAt() {
       const posted = newestFirst(state.runs.filter((r) => r.overview_posted));
       return posted[0]?.started_at ?? null;

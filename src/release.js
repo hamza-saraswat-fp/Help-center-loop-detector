@@ -26,8 +26,8 @@ const HOLD_REASON_UNCONFIRMED = 'unconfirmed_single';
 // turns into the "possible gap, not sure" kind, which is not what a release
 // is for.
 export const RELEASE_MIN_CONFIDENCE = 70;
-// Older held gaps stay in the Monday list: the conversation behind them has
-// gone cold and the product may have moved on.
+// Older held gaps stay held and are not released: the conversation behind
+// them has gone cold and the product may have moved on.
 export const RELEASE_WINDOW_DAYS = 14;
 // How far back a card still counts when asking "has this already been
 // shown?". Longer than the release window, so a gap released at two weeks
