@@ -244,3 +244,120 @@ test('pollReactions: honors env.slackReactionUserIds as the allow-list', async (
   assert.equal(result.adopted, 0);
   assert.equal(repos.state.candidates[0].status, 'posted');
 });
+
+// --- "true, but internal only" ------------------------------------------------
+
+test('reactionsToActions: a lock reaction marks the card internal only', () => {
+  assert.deepEqual(reactionsToActions([{ name: 'lock', users: ['U3'] }]), { action: 'internal_only', actor: 'U3' });
+});
+
+test('reactionsToActions: the other lock in the picker counts too', () => {
+  assert.deepEqual(reactionsToActions([{ name: 'closed_lock_with_key', users: ['U3'] }]), {
+    action: 'internal_only',
+    actor: 'U3',
+  });
+});
+
+test('reactionsToActions: lock and x together, internal only wins', () => {
+  // The lock is the more specific of the two: it is true, keep it internal.
+  const result = reactionsToActions([
+    { name: 'x', users: ['U2'] },
+    { name: 'lock', users: ['U3'] },
+  ]);
+  assert.deepEqual(result, { action: 'internal_only', actor: 'U3' });
+});
+
+test('reactionsToActions: check mark and lock together, adoption wins', () => {
+  const result = reactionsToActions([
+    { name: 'lock', users: ['U3'] },
+    { name: 'white_check_mark', users: ['U1'] },
+  ]);
+  assert.deepEqual(result, { action: 'adopted', actor: 'U1' });
+});
+
+test('reactionsToActions: a lock from someone off the allow-list falls through to an allowed x', () => {
+  const result = reactionsToActions(
+    [
+      { name: 'lock', users: ['U9'] },
+      { name: 'x', users: ['U1'] },
+    ],
+    { allowedUserIds: ['U1'] },
+  );
+  assert.deepEqual(result, { action: 'rejected', actor: 'U1' });
+});
+
+test('reactionsToActions: other emoji are not decisions', () => {
+  for (const name of ['eyes', '+1', 'heavy_check_mark', 'unlock', 'key', 'negative_squared_cross_mark']) {
+    assert.deepEqual(reactionsToActions([{ name, users: ['U1'] }]), { action: null, actor: null }, name);
+  }
+});
+
+test('pollReactions: a lock records internal_only and closes the card the way a rejection does', async () => {
+  const { client } = fakeSlackClient({
+    reactionsByTs: {
+      '111.1': [{ name: 'lock', users: ['U3'] }],
+      '222.2': [{ name: 'x', users: ['U2'] }],
+      '333.3': [{ name: 'white_check_mark', users: ['U1'] }],
+    },
+  });
+  const repos = fakeRepos({
+    seed: {
+      candidates: [
+        { id: 1, status: 'posted', slack_channel: 'C1', slack_ts: '111.1', created_at: '2026-09-01T00:00:00.000Z' },
+        { id: 2, status: 'posted', slack_channel: 'C1', slack_ts: '222.2', created_at: '2026-09-02T00:00:00.000Z' },
+        { id: 3, status: 'posted', slack_channel: 'C1', slack_ts: '333.3', created_at: '2026-09-03T00:00:00.000Z' },
+      ],
+    },
+  });
+  const { pollReactions } = createReactionPoller({ client });
+
+  const result = await pollReactions({ mode: 'live', candidates: repos.candidates, actions: repos.actions, env: fakeEnv() });
+
+  assert.deepEqual(result, { polled: 3, adopted: 1, internalOnly: 1, rejected: 1 });
+  assert.deepEqual(
+    repos.state.actions.map((a) => [a.candidateId, a.action, a.actor]),
+    [
+      [1, 'internal_only', 'U3'],
+      [2, 'rejected', 'U2'],
+      [3, 'adopted', 'U1'],
+    ],
+  );
+  // Closed like a rejection, so its twin is not released and its thread is
+  // still read. The action row is what says it was internal only.
+  assert.deepEqual(repos.state.candidates.map((c) => c.status), ['rejected', 'rejected', 'adopted']);
+});
+
+test('pollReactions: a decision an earlier run recorded but never closed is closed, and not counted twice', async () => {
+  // The action row landed, then the status write failed. Without the repair
+  // the card stays posted, and polled, for good.
+  const { client } = fakeSlackClient({ reactionsByTs: { '111.1': [{ name: 'lock', users: ['U3'] }] } });
+  const repos = fakeRepos({
+    seed: { candidates: [{ id: 1, status: 'posted', slack_channel: 'C1', slack_ts: '111.1' }] },
+  });
+  await repos.actions.recordAction({ candidateId: 1, action: 'internal_only', actor: 'U3', slackTs: '111.1' });
+  repos.failNext('recordAction'); // the unique index refusing the second row
+  const { pollReactions } = createReactionPoller({ client });
+
+  const result = await pollReactions({ mode: 'live', candidates: repos.candidates, actions: repos.actions, env: fakeEnv() });
+
+  assert.deepEqual(repos.pendingFailures(), []);
+  assert.equal(repos.state.candidates[0].status, 'rejected');
+  assert.equal(repos.state.actions.length, 1);
+  assert.deepEqual(result, { polled: 1, adopted: 0, internalOnly: 0, rejected: 0 });
+});
+
+test('pollReactions: a decision that could not be recorded at all leaves the card open', async () => {
+  // For instance a lock before migration 0011 is applied: the insert fails
+  // the check constraint, nothing is recorded, and the card stays posted.
+  const { client } = fakeSlackClient({ reactionsByTs: { '111.1': [{ name: 'lock', users: ['U3'] }] } });
+  const repos = fakeRepos({
+    seed: { candidates: [{ id: 1, status: 'posted', slack_channel: 'C1', slack_ts: '111.1' }] },
+  });
+  repos.failNext('recordAction');
+  const { pollReactions } = createReactionPoller({ client });
+
+  await pollReactions({ mode: 'live', candidates: repos.candidates, actions: repos.actions, env: fakeEnv() });
+
+  assert.equal(repos.state.candidates[0].status, 'posted');
+  assert.deepEqual(repos.state.actions, []);
+});

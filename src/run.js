@@ -37,7 +37,6 @@ import {
   buildGapPost,
   buildGapThread,
   buildDuplicateReply,
-  buildWeeklySummary,
   buildDailyPost,
   buildDailyThread,
 } from './slack/blocks.js';
@@ -59,8 +58,8 @@ const CLONE_TIMEOUT_MS = 60000;
 const MAX_CHECK_ATTEMPTS = 3;
 
 // A verdict about something that is already in the help center (or is not a
-// gap at all) is recorded but never gets its own card: UNFINDABLE and HIDDEN
-// go to the weekly summary instead, NOT_A_GAP goes nowhere.
+// gap at all) is recorded but never gets its own card. They show up in the
+// daily check's thread, grouped, and nowhere else.
 const LOGGED_VERDICTS = new Set(['NOT_A_GAP', 'UNFINDABLE', 'HIDDEN']);
 
 // A help-center-bound gap with no confirmed answer yet is not posted on its
@@ -88,7 +87,6 @@ const LOOP_RUNS_COLUMNS = [
   'cards_posted',
   'checks_failed',
   'cost_usd',
-  'summary_posted',
   'overview_posted',
   'errors',
 ];
@@ -96,15 +94,6 @@ const LOOP_RUNS_COLUMNS = [
 function ledgerPayload(stats) {
   return Object.fromEntries(LOOP_RUNS_COLUMNS.filter((key) => key in stats).map((key) => [key, stats[key]]));
 }
-
-// Weekly summary window: the first run after 14:00 UTC on a Monday, and only
-// when the last one went out more than six days ago (six, not seven, so a run
-// that slips by an hour week to week doesn't skip a week entirely).
-const SUMMARY_WEEKDAY = 1;
-const SUMMARY_HOUR_UTC = 14;
-const SUMMARY_MIN_GAP_DAYS = 6;
-// A week of logged candidates, well above the ~15 the summary actually lists.
-const SUMMARY_MAX_ROWS = 500;
 
 // Daily check window: the first run at or after 14:00 UTC (9 AM Central) on a
 // weekday, and only when the last one went out more than twenty hours ago
@@ -178,15 +167,9 @@ export function createRun({
   now = () => new Date(),
   gitSha = null,
 }) {
-  // Pure: `lastSummaryAt` is read once by the caller and passed in, so the
-  // gate and the summary's own `since` window agree on one answer.
-  function isSummaryDue(at, lastSummaryAt) {
-    if (at.getUTCDay() !== SUMMARY_WEEKDAY || at.getUTCHours() < SUMMARY_HOUR_UTC) return false;
-    if (!lastSummaryAt) return true;
-    return at.getTime() - new Date(lastSummaryAt).getTime() > SUMMARY_MIN_GAP_DAYS * DAY_MS;
-  }
-
-  // Pure, like `isSummaryDue`: weekdays only, never before 9 AM Central.
+  // Pure: weekdays only, never before 9 AM Central. `lastOverviewAt` is read
+  // once by the caller and passed in, so the gate and the daily check's own
+  // `since` window agree on one answer.
   function isOverviewDue(at, lastOverviewAt) {
     const day = at.getUTCDay();
     if (day === 0 || day === 6 || at.getUTCHours() < OVERVIEW_HOUR_UTC) return false;
@@ -665,7 +648,7 @@ export function createRun({
         const needsAnswer = truthKind === 'none';
 
         // Only a help-center-bound gap earns a card at all; everything else
-        // is recorded for the weekly summary. Among those, one nobody has
+        // is recorded and counted in the daily check. Among those, one nobody has
         // confirmed an answer for is *held* rather than posted on its first
         // sighting -- it stays 'logged', with `evidence.hold_reason` marking
         // why, until a second sighting or a re-check that brings human truth
@@ -968,67 +951,11 @@ export function createRun({
       }
 
       // --- thread replies --------------------------------------------------
-      // Ahead of the summary, not with the other two pollers below, so a
-      // reason written an hour before Monday's digest is in it.
+      // What people write under a card: the reason for an x, the answer or
+      // workaround on an internal-only one. Recorded as `human_reply` rows
+      // and read back by `npm run decisions` (src/decisions.js).
       if (!opts.skipPoll) {
         await pollReplies({ channel, mode, candidates, actions, poster, env, now: startedAt });
-      }
-
-      // --- weekly summary --------------------------------------------------
-      if (!dryRun && channel) {
-        const lastSummaryAt = await runs.lastSummaryAt();
-        if (isSummaryDue(startedAt, lastSummaryAt)) {
-          // The first summary ever covers the last week; after that, exactly
-          // the span since the previous one, so nothing falls between two.
-          const since = lastSummaryAt ?? new Date(startedAt.getTime() - 7 * DAY_MS).toISOString();
-          // `since` goes into the query, not a filter over the result: the
-          // limit is applied by Postgres first, so filtering afterwards means
-          // an empty summary forever once the logged backlog passes one page.
-          const logged = await candidates.listByStatus(['logged'], { since, limit: SUMMARY_MAX_ROWS });
-
-          // Four buckets, each a thing that gets no card of its own: seen
-          // once but unconfirmed, findable-but-not-found, present-but-hidden,
-          // and not ours at all.
-          // Rejected cards, with what people wrote in each one's thread
-          // (src/slack/replies.js). Read from gap_actions by when the x
-          // landed, not from the candidate's created_at: a card posted three
-          // weeks ago and rejected yesterday belongs in this week's list.
-          const rejected = [];
-          const rejections = (await actions.listActions?.({ actions: ['rejected'], since, limit: SUMMARY_MAX_ROWS })) ?? [];
-          for (const rejection of rejections) {
-            const candidate = await candidates.findById(rejection.candidate_id);
-            if (!candidate) continue;
-            const replies =
-              (await actions.listActions?.({ actions: ['human_reply'], candidateId: candidate.id, limit: 5 })) ?? [];
-            rejected.push({ ...candidate, reasons: replies.map((r) => r.note).filter(Boolean) });
-          }
-
-          // Help center edits this week: the loop's success metric. Null when
-          // GitHub refuses (token without pull request read); the card says so.
-          const prs = await fetchMerges({ env });
-          const edits = prs ? countMerges(prs, { since }) : null;
-
-          const summary = {
-            edits,
-            rejected,
-            unconfirmed: logged.filter((c) => c.evidence?.hold_reason === HOLD_REASON_UNCONFIRMED),
-            unfindable: logged.filter((c) => c.destination !== 'internal' && c.verdict === 'UNFINDABLE'),
-            hidden: logged.filter((c) => c.destination !== 'internal' && c.verdict === 'HIDDEN'),
-            internal: logged.filter((c) => c.destination === 'internal'),
-          };
-
-          const card = buildCard(
-            () => buildWeeklySummary({ since, ...summary, now: startedAt }),
-            'the weekly summary',
-          );
-          if (card) {
-            const ts = await poster.postCard(channel, card);
-            if (ts) {
-              stats.summary_posted = true;
-              log(LANE, `weekly summary posted since=${since}`);
-            }
-          }
-        }
       }
 
       // --- daily check -----------------------------------------------------
@@ -1047,8 +974,35 @@ export function createRun({
               candidates.listByStatus(ALL_CANDIDATE_STATUSES, { since, limit: OVERVIEW_MAX_ROWS }),
               events.countProcessedSince(since),
               candidates.listByStatus(['posted', 'pr_open'], { limit: OVERVIEW_MAX_ROWS }),
-              actions.listActions({ actions: ['adopted', 'merged', 'rejected'], since, limit: OVERVIEW_MAX_ROWS }),
+              actions.listActions({
+                actions: ['adopted', 'merged', 'internal_only', 'rejected'],
+                since,
+                limit: OVERVIEW_MAX_ROWS,
+              }),
             ]);
+
+            // Mondays carry one extra line: last week's help center edits
+            // that started from a card, the number the loop is measured by.
+            // The previous calendar week, Monday to Monday UTC, so the post
+            // agrees with `npm run metrics` (src/metrics.js). Guarded on its
+            // own: GitHub being down must cost this one line, never the
+            // daily check. Null (the token cannot read pull requests, or the
+            // call failed) leaves the line out.
+            let lastWeekEdits = null;
+            if (startedAt.getUTCDay() === 1) {
+              try {
+                const thisMonday = Date.UTC(startedAt.getUTCFullYear(), startedAt.getUTCMonth(), startedAt.getUTCDate());
+                const prs = await fetchMerges({ env });
+                if (prs) {
+                  lastWeekEdits = countMerges(prs, {
+                    since: new Date(thisMonday - 7 * DAY_MS),
+                    until: new Date(thisMonday),
+                  }).fromCards;
+                }
+              } catch (err) {
+                logError(LANE, `could not count last week's edits: ${messageOf(err)}`);
+              }
+            }
 
             const cards = buildCard(() => {
               const summary = summarizeDay({
@@ -1064,6 +1018,7 @@ export function createRun({
                 latestBySource: stats.events_by_source,
                 configuredSources: Object.keys(env.sources ?? {}).filter((source) => env.sources[source]),
                 releaseMax,
+                lastWeekEdits,
               });
               return { post: buildDailyPost(summary), thread: buildDailyThread(summary) };
             }, 'the daily check');

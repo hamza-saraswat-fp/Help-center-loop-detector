@@ -12,7 +12,8 @@
     "test": "node --test test/*.test.js",
     "calibrate": "node scripts/calibrate.js",
     "migrate": "bash scripts/apply-migrations.sh",
-    "metrics": "node scripts/weekly-metrics.js"
+    "metrics": "node scripts/weekly-metrics.js",
+    "decisions": "node scripts/card-decisions.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

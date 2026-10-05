@@ -105,6 +105,29 @@ test('summarizeDay: questions set aside as placeholders are counted apart from q
   assert.equal(summarizeDay(healthy()).noQuestion, 0);
 });
 
+test("summarizeDay: carries last week's edits through, null when there is nothing to say", () => {
+  assert.equal(summarizeDay(healthy()).lastWeekEdits, null);
+  assert.equal(summarizeDay(healthy({ lastWeekEdits: 0 })).lastWeekEdits, 0);
+  assert.equal(summarizeDay(healthy({ lastWeekEdits: 5 })).lastWeekEdits, 5);
+});
+
+test('summarizeDay: internal only is its own count, neither fixed nor rejected', () => {
+  const summary = summarizeDay(
+    healthy({
+      outcomes: [
+        { candidate_id: 1, action: 'adopted' },
+        { candidate_id: 2, action: 'internal_only' },
+        { candidate_id: 3, action: 'internal_only' },
+        { candidate_id: 4, action: 'rejected' },
+      ],
+    }),
+  );
+  assert.deepEqual(
+    { fixed: summary.cards.fixed, internalOnly: summary.cards.internalOnly, rejected: summary.cards.rejected },
+    { fixed: 1, internalOnly: 2, rejected: 1 },
+  );
+});
+
 test('summarizeDay: carries the daily release cap through, 0 when the release is off', () => {
   assert.equal(summarizeDay(healthy()).releaseMax, 0);
   assert.equal(summarizeDay(healthy({ releaseMax: 5 })).releaseMax, 5);

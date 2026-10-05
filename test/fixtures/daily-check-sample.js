@@ -48,5 +48,8 @@ export function sampleDayInput() {
     // The daily release is on in production, so the manual's sample shows
     // the wording people actually see.
     releaseMax: 5,
+    // The sample day is a Monday, the one day the post carries last week's
+    // edits. src/run.js computes this from GitHub; here it is just a number.
+    lastWeekEdits: 5,
   };
 }

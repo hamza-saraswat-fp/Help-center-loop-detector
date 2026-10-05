@@ -37,7 +37,7 @@ const ALL = ['new', 'held', 'posted', 'adopted', 'rejected', 'pr_open', 'merged'
 
 const [allCandidates, allActions, allRuns, waiting, prs] = await Promise.all([
   candidates.listByStatus(ALL, { since: earliest.toISOString(), limit: 5000 }),
-  actions.listActions({ actions: ['adopted', 'merged', 'rejected'], since: earliest.toISOString(), limit: 5000 }),
+  actions.listActions({ actions: ['adopted', 'merged', 'internal_only', 'rejected'], since: earliest.toISOString(), limit: 5000 }),
   runs.listRunsSince(earliest.toISOString(), { limit: 5000 }),
   candidates.listByStatus(['posted', 'pr_open'], { limit: 5000 }),
   fetchMergedPrs({ env }),

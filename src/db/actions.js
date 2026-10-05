@@ -90,9 +90,10 @@ export function createActionsRepo({ client }) {
     }
   }
 
-  // The Monday summary's read: which cards were rejected this week, and what
-  // people wrote in a card's thread (`human_reply`, src/slack/replies.js).
-  // Oldest first, so a thread's notes read in the order they were written.
+  // Actions of the given kinds since a point in time: which cards were
+  // closed and how, and what people wrote in a card's thread (`human_reply`,
+  // src/slack/replies.js). Oldest first, so a thread's notes read in the
+  // order they were written.
   async function listActions({ actions = [], since = null, candidateId = null, limit = 100 } = {}) {
     try {
       let query = client

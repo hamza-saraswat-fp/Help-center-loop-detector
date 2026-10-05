@@ -1,8 +1,9 @@
-// Task 14, reactions lane: turns a Slack `reactions.get` response into an
-// adopted/rejected verdict, and polls every 'posted' candidate for one.
-// `reactionsToActions` is pure so the mapping rules (bot's own reaction
-// doesn't count, allow-list when one is configured, adoption beats
-// rejection) are testable without a Slack client. `createReactionPoller`
+// Task 14, reactions lane: turns a Slack `reactions.get` response into a
+// decision about a card, and polls every 'posted' candidate for one. Three
+// decisions: a check mark (adopted), a lock ("true, but internal only") and
+// an x (rejected). `reactionsToActions` is pure so the mapping rules (bot's
+// own reaction doesn't count, allow-list when one is configured, the order
+// of precedence) are testable without a Slack client. `createReactionPoller`
 // does the I/O: one `reactions.get` per posted candidate, under the shared
 // src/util/withTimeout.js deadline (WebClient has no AbortSignal support).
 
@@ -14,31 +15,47 @@ import { withTimeout } from '../util/withTimeout.js';
 
 const LANE = 'reactions';
 
-const ADOPT_EMOJI = 'white_check_mark';
-const REJECT_EMOJI = 'x';
+const ADOPT_EMOJIS = ['white_check_mark'];
+// "True, but internal only": the gap is real, and it does not belong in the
+// public help center (a limitation, a product gap). Two names, because the
+// emoji picker shows two locks side by side and either one is a fair pick.
+const INTERNAL_EMOJIS = ['lock', 'closed_lock_with_key'];
+const REJECT_EMOJIS = ['x'];
+
+// What each decision does to the card. An internal-only card is closed the
+// same way a rejected one is: its reworded twin must not be released, and
+// its thread is still read for the workaround someone types under it. Both
+// of those key off status 'rejected' already, so the status is shared and
+// the gap_actions row says which of the two it was.
+const STATUS_AFTER = { adopted: 'adopted', internal_only: 'rejected', rejected: 'rejected' };
 
 /**
- * Map a Slack message's `reactions` array to an adopt/reject verdict. Pure:
- * no I/O, no clock. Adoption beats rejection when both are present (ties are
- * rare in practice and a human can always re-react to correct one).
+ * Map a Slack message's `reactions` array to a decision. Pure: no I/O, no
+ * clock. When more than one is present the most specific wins: a check mark
+ * (somebody fixed it) beats a lock, and a lock (it is true, keep it
+ * internal) beats a plain x.
  * @param {Array<{name: string, users: string[]}>} reactions
  * @param {{allowedUserIds?: string[], botUserId?: string|null}} [opts]
- * @returns {{action: 'adopted'|'rejected'|null, actor: string|null}}
+ * @returns {{action: 'adopted'|'internal_only'|'rejected'|null, actor: string|null}}
  */
 export function reactionsToActions(reactions, { allowedUserIds = [], botUserId = null } = {}) {
-  function firstEligibleActor(emojiName) {
-    const reaction = (reactions ?? []).find((r) => r.name === emojiName);
-    if (!reaction) return null;
-
-    const humans = (reaction.users ?? []).filter((userId) => userId !== botUserId);
-    const eligible = allowedUserIds.length > 0 ? humans.filter((userId) => allowedUserIds.includes(userId)) : humans;
-    return eligible.length > 0 ? eligible[0] : null;
+  function firstEligibleActor(emojiNames) {
+    for (const reaction of reactions ?? []) {
+      if (!emojiNames.includes(reaction.name)) continue;
+      const humans = (reaction.users ?? []).filter((userId) => userId !== botUserId);
+      const eligible = allowedUserIds.length > 0 ? humans.filter((userId) => allowedUserIds.includes(userId)) : humans;
+      if (eligible.length > 0) return eligible[0];
+    }
+    return null;
   }
 
-  const adoptedBy = firstEligibleActor(ADOPT_EMOJI);
+  const adoptedBy = firstEligibleActor(ADOPT_EMOJIS);
   if (adoptedBy) return { action: 'adopted', actor: adoptedBy };
 
-  const rejectedBy = firstEligibleActor(REJECT_EMOJI);
+  const internalBy = firstEligibleActor(INTERNAL_EMOJIS);
+  if (internalBy) return { action: 'internal_only', actor: internalBy };
+
+  const rejectedBy = firstEligibleActor(REJECT_EMOJIS);
   if (rejectedBy) return { action: 'rejected', actor: rejectedBy };
 
   return { action: null, actor: null };
@@ -69,11 +86,14 @@ export function createReactionPoller({ client, timeoutMs = 10000 } = {}) {
   }
 
   /**
-   * Poll every 'posted' candidate's card for a ✅/❌ reaction and record
-   * the outcome. `context` is the same shape run.js's poll step builds:
-   * `{ mode, candidates, actions, env, ... }`.
+   * Poll every 'posted' candidate's card for a check mark, lock or x
+   * reaction and record the outcome. `context` is the same shape run.js's
+   * poll step builds: `{ mode, candidates, actions, env, ... }`.
+   *
+   * A decision is final once it is read: only 'posted' cards are polled, so
+   * a reaction changed afterwards is never seen.
    * @param {{mode: string, candidates: object, actions: object, env: object}} context
-   * @returns {Promise<{polled: number, adopted?: number, rejected?: number}>}
+   * @returns {Promise<{polled: number, adopted?: number, internalOnly?: number, rejected?: number}>}
    */
   async function pollReactions(context) {
     const { mode, candidates, actions, env } = context;
@@ -88,8 +108,7 @@ export function createReactionPoller({ client, timeoutMs = 10000 } = {}) {
     const posted = await candidates.listByStatus(['posted'], { limit: 200 });
 
     let polled = 0;
-    let adopted = 0;
-    let rejected = 0;
+    const counts = { adopted: 0, internal_only: 0, rejected: 0 };
 
     for (const candidate of posted) {
       if (!candidate.slack_channel || !candidate.slack_ts) continue;
@@ -110,14 +129,21 @@ export function createReactionPoller({ client, timeoutMs = 10000 } = {}) {
           actor,
           slackTs: candidate.slack_ts,
         });
-        // `recordAction` returns null on a duplicate (already recorded) --
-        // that isn't an error, just nothing new to do, so the candidate's
-        // status only moves on a fresh row.
-        if (!row) continue;
+        // `recordAction` returns null on a duplicate, and on any other
+        // failed insert. A duplicate on a card that is still 'posted' means
+        // an earlier run recorded the decision and then failed to close the
+        // card, which would otherwise leave it open, and polled, for good:
+        // the row is there, so finish the job, and count nothing twice. No
+        // row at all (the insert itself failed) leaves the card alone.
+        if (!row) {
+          if (await actions.hasAction(candidate.id, action)) {
+            await candidates.updateCandidate(candidate.id, { status: STATUS_AFTER[action] });
+          }
+          continue;
+        }
 
-        await candidates.updateCandidate(candidate.id, { status: action });
-        if (action === 'adopted') adopted += 1;
-        else rejected += 1;
+        await candidates.updateCandidate(candidate.id, { status: STATUS_AFTER[action] });
+        counts[action] += 1;
       } catch (err) {
         // A single candidate's reactions.get failing or timing out is not a
         // reason to stop polling the rest -- log it and move on.
@@ -125,8 +151,8 @@ export function createReactionPoller({ client, timeoutMs = 10000 } = {}) {
       }
     }
 
-    log(LANE, `polled=${polled} adopted=${adopted} rejected=${rejected}`);
-    return { polled, adopted, rejected };
+    log(LANE, `polled=${polled} adopted=${counts.adopted} internal_only=${counts.internal_only} rejected=${counts.rejected}`);
+    return { polled, adopted: counts.adopted, internalOnly: counts.internal_only, rejected: counts.rejected };
   }
 
   return { pollReactions };

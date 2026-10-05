@@ -39,6 +39,7 @@ test('weeklyRow: one row, edits first, everything filtered to the week', () => {
     hc_edits_total: 2,
     cards_posted: 3,
     cards_fixed: 1,
+    cards_internal_only: 0,
     cards_rejected: 1,
     cards_waiting: 2,
     gaps_held: 1,
@@ -55,6 +56,20 @@ test('weeklyRow: a gap the daily release let through still counts as held for it
     evidence: { released: { at: '2026-09-28T14:04:00Z', by: 'daily_release' } },
   };
   assert.equal(weeklyRow({ ...input, candidates: [...input.candidates, released] }).gaps_held, 2);
+});
+
+test('weeklyRow: internal only is counted per card, apart from rejected', () => {
+  const actions = [
+    ...input.actions,
+    { candidate_id: 8, action: 'internal_only', at: '2026-09-17T12:00:00Z' },
+    { candidate_id: 9, action: 'internal_only', at: '2026-09-18T12:00:00Z' },
+    { candidate_id: 9, action: 'internal_only', at: '2026-09-18T13:00:00Z' }, // same card, counted once
+    { candidate_id: 10, action: 'internal_only', at: '2026-09-22T12:00:00Z' }, // next week
+  ];
+  const row = weeklyRow({ ...input, actions });
+  assert.equal(row.cards_internal_only, 2);
+  assert.equal(row.cards_rejected, 1);
+  assert.ok(METRIC_COLUMNS.indexOf('cards_internal_only') === METRIC_COLUMNS.indexOf('cards_rejected') - 1);
 });
 
 test('weeklyRow: edits are null, not zero, when GitHub could not be read', () => {

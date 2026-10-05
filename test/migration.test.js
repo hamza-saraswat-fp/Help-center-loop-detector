@@ -89,6 +89,31 @@ test("0010 admits 'no_question' without dropping any outcome 0001 allowed", () =
   assert.doesNotMatch(outcomeSql, /drop constraint if exists/);
 });
 
+// --- 0011: true, but internal only -----------------------------------------------
+
+const internalOnlySql = readFileSync(new URL('../migrations/0011_internal_only.sql', import.meta.url), 'utf8');
+
+test("0011 admits 'internal_only' without dropping any action 0008 allowed", () => {
+  const before = humanReplySql.match(/check \(action in \(([^)]+)\)\)/)[1].split(',').map((v) => v.trim());
+  const widened = internalOnlySql.match(/check \(action in \(([^)]+)\)\)/)[1].split(',').map((v) => v.trim());
+  assert.deepEqual(widened, [...before, "'internal_only'"]);
+  assert.match(internalOnlySql, /alter table gap_actions drop constraint gap_actions_action_check;/);
+});
+
+test("0011 rebuilds gap_actions_once_idx with 'internal_only', so a reaction read twice records one row", () => {
+  const original = sql.match(/gap_actions_once_idx\s+on gap_actions \(candidate_id, action\)\s+where action in \(([^)]+)\)/)[1].split(',').map((v) => v.trim());
+  const rebuilt = internalOnlySql.match(/create unique index gap_actions_once_idx\s+on gap_actions \(candidate_id, action\)\s+where action in \(([^)]+)\)/)[1].split(',').map((v) => v.trim());
+  assert.deepEqual(rebuilt, [...original, "'internal_only'"]);
+  assert.match(internalOnlySql, /drop index gap_actions_once_idx;/);
+});
+
+test('0011 names what it drops outright, and leaves the candidate status list alone', () => {
+  // A wrong name must fail loudly, as in 0010. And an internal-only card is
+  // closed as 'rejected': the status check is not widened.
+  assert.doesNotMatch(internalOnlySql, /drop (constraint|index) if exists/);
+  assert.doesNotMatch(internalOnlySql, /alter table gap_candidates/);
+});
+
 // --- 0009: the daily check marker ------------------------------------------------
 
 test('0009 adds loop_runs.overview_posted, additive and defaulting to false', () => {
