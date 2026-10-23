@@ -15,10 +15,10 @@ import 'dotenv/config';
 
 // Hard-fail: the service cannot do anything useful without these. Missing
 // any one of them throws at boot (or at loadEnv() call time in tests).
+// A model key is required too, but either of two will do: see loadEnv.
 const REQUIRED = [
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
-  'OPENROUTER_API_KEY',
   'SLACK_BOT_TOKEN',
   'SLACK_GAPS_CHANNEL_ID',
   'DOCS_REPO_URL',
@@ -53,6 +53,11 @@ export function loadEnv(envObject) {
     if (!envObject[key]) {
       throw new Error(`Missing required environment variable: ${key}`);
     }
+  }
+  // Model access goes through the Vercel AI Gateway when its key is set,
+  // otherwise OpenRouter (src/check/llm.js). One of the two must be present.
+  if (!envObject.AI_GATEWAY_API_KEY && !envObject.OPENROUTER_API_KEY) {
+    throw new Error('Missing required environment variable: AI_GATEWAY_API_KEY (or OPENROUTER_API_KEY)');
   }
 
   // HC_LOOP_MODE: dry_run (default, writes nothing and posts nothing) |
@@ -145,6 +150,7 @@ export function loadEnv(envObject) {
     supabaseUrl: envObject.SUPABASE_URL,
     supabaseServiceRoleKey: envObject.SUPABASE_SERVICE_ROLE_KEY,
     openrouterApiKey: envObject.OPENROUTER_API_KEY,
+    aiGatewayApiKey: envObject.AI_GATEWAY_API_KEY || '',
     slackBotToken: envObject.SLACK_BOT_TOKEN,
     slackGapsChannelId: envObject.SLACK_GAPS_CHANNEL_ID,
     docsRepoUrl,
@@ -200,6 +206,7 @@ const resolved = skipValidation ? null : loadEnv(process.env);
 export const supabaseUrl = resolved?.supabaseUrl;
 export const supabaseServiceRoleKey = resolved?.supabaseServiceRoleKey;
 export const openrouterApiKey = resolved?.openrouterApiKey;
+export const aiGatewayApiKey = resolved?.aiGatewayApiKey;
 export const slackBotToken = resolved?.slackBotToken;
 export const slackGapsChannelId = resolved?.slackGapsChannelId;
 export const docsRepoUrl = resolved?.docsRepoUrl;

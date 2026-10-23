@@ -36,6 +36,12 @@ test('throws when a required var is missing', () => {
   }
 });
 
+test('AI_GATEWAY_API_KEY satisfies the model key in place of OPENROUTER_API_KEY', () => {
+  const env = baseEnv({ AI_GATEWAY_API_KEY: 'gw-key' });
+  delete env.OPENROUTER_API_KEY;
+  assert.equal(loadEnv(env).aiGatewayApiKey, 'gw-key');
+});
+
 test('loads successfully with only the required vars set', () => {
   const config = loadEnv(baseEnv());
   assert.equal(config.supabaseUrl, 'https://example.supabase.co');

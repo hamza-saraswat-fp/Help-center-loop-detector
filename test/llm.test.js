@@ -15,6 +15,12 @@ test('buildOpenRouterClientOptions sets maxRetries: 0 (no retries inside a run)'
   assert.equal(options.apiKey, 'some-key');
 });
 
+test('buildOpenRouterClientOptions takes the Gateway base URL and keeps maxRetries: 0', () => {
+  const options = buildOpenRouterClientOptions('gw-key', 'https://ai-gateway.vercel.sh/v1');
+  assert.equal(options.baseURL, 'https://ai-gateway.vercel.sh/v1');
+  assert.equal(options.maxRetries, 0);
+});
+
 function fakeClientFactory({ create }) {
   return () => ({
     chat: { completions: { create } },
