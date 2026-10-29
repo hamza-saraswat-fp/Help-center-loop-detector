@@ -1,15 +1,17 @@
-// The one place that calls a model, via OpenRouter. Global Constraints:
-// OpenRouter only, `usage: { include: true }` so cost rides along on the
-// response, model name always comes from the active prompt row (never
-// hardcoded here), and a per-stage AbortController timeout (90s) with no
-// retries inside a run.
+// The one place that calls a model, via the Vercel AI Gateway when
+// AI_GATEWAY_API_KEY is set, otherwise OpenRouter. Both take the same
+// OpenAI-compatible request and model ids, and both honor
+// `usage: { include: true }` so cost rides along on the response. Model name
+// always comes from the active prompt row (never hardcoded here), and a
+// per-stage AbortController timeout (90s) with no retries inside a run.
 
 import OpenAI from 'openai';
 
-import { openrouterApiKey } from '../config/env.js';
+import { openrouterApiKey, aiGatewayApiKey } from '../config/env.js';
 import { addLlmCall } from '../trace.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+const GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1';
 const DEFAULT_MAX_TOKENS = 2000;
 const DEFAULT_TIMEOUT_MS = 90_000;
 
@@ -18,11 +20,12 @@ const DEFAULT_TIMEOUT_MS = 90_000;
  * left inline) so a test can assert `maxRetries: 0` without mocking the SDK
  * constructor itself.
  * @param {string} apiKey
+ * @param {string} [baseURL] defaults to OpenRouter
  */
-export function buildOpenRouterClientOptions(apiKey) {
+export function buildOpenRouterClientOptions(apiKey, baseURL = OPENROUTER_BASE_URL) {
   return {
     apiKey,
-    baseURL: OPENROUTER_BASE_URL,
+    baseURL,
     // The SDK retries transient errors (429/5xx) twice by default. Global
     // Constraints: no retries inside a run -- a run that starts over already
     // handles the next hourly pass, and a hidden retry here would double a
@@ -35,16 +38,16 @@ export function buildOpenRouterClientOptions(apiKey) {
   };
 }
 
-function defaultClientFactory({ apiKey }) {
-  return new OpenAI(buildOpenRouterClientOptions(apiKey));
+function defaultClientFactory({ apiKey, baseURL }) {
+  return new OpenAI(buildOpenRouterClientOptions(apiKey, baseURL));
 }
 
 /**
- * @param {{apiKey: string, clientFactory?: (args: {apiKey: string}) => object, now?: () => Date}} deps
+ * @param {{apiKey: string, baseURL?: string, clientFactory?: (args: {apiKey: string, baseURL?: string}) => object, now?: () => Date}} deps
  * @returns {(args: {stage: string, model: string, system: string, user: string,
  *   maxTokens?: number, timeoutMs?: number, temperature?: number}) => Promise<{text: string, usage: object, model: string}>}
  */
-export function createModelCaller({ apiKey, clientFactory = defaultClientFactory, now = () => new Date() } = {}) {
+export function createModelCaller({ apiKey, baseURL, clientFactory = defaultClientFactory, now = () => new Date() } = {}) {
   void now; // reserved for future use (e.g. attaching a timestamp to the call record)
   // Built lazily, on first use, rather than here: constructing the module-level
   // `callModel` below must not require a real OPENROUTER_API_KEY at import
@@ -61,7 +64,7 @@ export function createModelCaller({ apiKey, clientFactory = defaultClientFactory
     timeoutMs = DEFAULT_TIMEOUT_MS,
     temperature = 0,
   }) {
-    if (!client) client = clientFactory({ apiKey });
+    if (!client) client = clientFactory({ apiKey, baseURL });
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -105,4 +108,6 @@ export function createModelCaller({ apiKey, clientFactory = defaultClientFactory
   };
 }
 
-export const callModel = createModelCaller({ apiKey: openrouterApiKey });
+export const callModel = createModelCaller(
+  aiGatewayApiKey ? { apiKey: aiGatewayApiKey, baseURL: GATEWAY_BASE_URL } : { apiKey: openrouterApiKey },
+);
